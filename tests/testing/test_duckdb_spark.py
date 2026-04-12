@@ -24,7 +24,7 @@ class TestRow:
     def test_column_access_without_names_raises(self):
         r = Row((1, 2), None)
         with pytest.raises(KeyError):
-            r["id"]
+            _ = r["id"]
 
     def test_as_dict(self):
         r = Row((1, "alice"), ["id", "name"])
