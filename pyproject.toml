@@ -114,6 +114,30 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 
+# Third-party libraries without type stubs
+[[tool.mypy.overrides]]
+module = ["requests.*", "pyodbc.*", "pyarrow.*", "deltalake.*", "pandas.*", "duckdb.*"]
+ignore_missing_imports = true
+
+# Ported fabric-libs modules — strict typing will be added iteratively.
+# Remove modules from this list as they get proper type annotations.
+[[tool.mypy.overrides]]
+module = [
+    "pyfabric.client.auth",
+    "pyfabric.client.http",
+    "pyfabric.client.graph",
+    "pyfabric.client.livy",
+    "pyfabric.client.ontology",
+    "pyfabric.client.ontology_sync",
+    "pyfabric.data.*",
+    "pyfabric.workspace.*",
+    "pyfabric.items.bundle",
+    "pyfabric.items.crud",
+    "pyfabric.cli",
+    "pyfabric._logging",
+]
+ignore_errors = true
+
 # -- Pytest ----------------------------------------------------------------
 
 [tool.pytest.ini_options]
