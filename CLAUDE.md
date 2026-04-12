@@ -17,6 +17,7 @@ generate and test Fabric item definitions locally.
 - **Layout**: src-layout (`src/pyfabric/`)
 - **Linting**: ruff (configured in pyproject.toml)
 - **Type checking**: mypy in strict mode
+- **Logging**: structlog (JSON output, token masking, context binding)
 - **Testing**: pytest (tests in `tests/`)
 - **CI**: GitHub Actions (lint, type-check, test, dependency review)
 
@@ -43,6 +44,8 @@ src/pyfabric/
 - Prefer dataclasses or named tuples over plain dicts for structured data
 - Tests use pytest fixtures; avoid unittest.TestCase
 - No mutable default arguments
+- Use `import structlog` and `log = structlog.get_logger()` (NOT stdlib `logging`)
+- Use `log.info("message", key=value)` for structured context (NOT f-strings in messages)
 
 ## Running Checks
 

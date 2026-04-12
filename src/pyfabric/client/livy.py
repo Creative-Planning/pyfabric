@@ -21,14 +21,14 @@ API docs:
 """
 
 import json
-import logging
 import time
 
 import requests
+import structlog
 
 from .auth import FabricCredential
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 class LivyClient:

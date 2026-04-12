@@ -19,14 +19,15 @@ Usage:
 """
 
 import argparse
-import logging
 import sys
 from pathlib import Path
+
+import structlog
 
 from pyfabric._logging import setup_logging
 from pyfabric.client.auth import FabricCredential
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 # ── Environment registry ─────────────────────────────────────────────────────
 

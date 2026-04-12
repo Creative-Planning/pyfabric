@@ -27,13 +27,14 @@ Usage:
 
 import base64
 import json
-import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
+import structlog
+
+log = structlog.get_logger()
 
 # ── Platform schema ──────────────────────────────────────────────────────────
 

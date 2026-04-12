@@ -5,11 +5,11 @@ API reference:
   https://learn.microsoft.com/en-us/rest/api/fabric/core/workspaces
 """
 
-import logging
+import structlog
 
 from pyfabric.client.http import FabricClient
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 # ------------------------------------------------------------------

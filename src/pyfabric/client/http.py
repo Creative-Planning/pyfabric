@@ -19,18 +19,18 @@ Usage:
 """
 
 import json
-import logging
 import time
 import urllib.parse
 from typing import Any
 
 import requests
+import structlog
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .auth import FABRIC_RESOURCE, FabricCredential
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 BASE_URL = "https://api.fabric.microsoft.com/v1"
 _DEFAULT_TIMEOUT = 30  # seconds

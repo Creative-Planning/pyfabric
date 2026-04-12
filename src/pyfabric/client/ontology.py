@@ -40,16 +40,17 @@ API reference:
 
 import base64
 import json
-import logging
 import random
 import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+import structlog
+
 from .http import FabricClient
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

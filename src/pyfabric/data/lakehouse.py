@@ -18,10 +18,11 @@ Usage:
 
 import datetime
 import io
-import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import structlog
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 from pyfabric.client.auth import FabricCredential
 from pyfabric.data.onelake import abfss_url
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 @dataclass
