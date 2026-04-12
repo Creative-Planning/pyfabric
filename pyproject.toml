@@ -33,6 +33,9 @@ Repository = "https://github.com/Creative-Planning/pyfabric"
 [project.scripts]
 pyfabric = "pyfabric.cli:main"
 
+[project.entry-points.pytest11]
+pyfabric = "pyfabric.testing.plugin"
+
 [project.optional-dependencies]
 azure = [
     "azure-identity>=1.17",
@@ -121,7 +124,7 @@ warn_unused_ignores = true
 
 # Third-party libraries without type stubs
 [[tool.mypy.overrides]]
-module = ["requests.*", "pyodbc.*", "pyarrow.*", "deltalake.*", "pandas.*", "duckdb.*", "structlog.*"]
+module = ["requests.*", "pyodbc.*", "pyarrow.*", "pandas.*", "duckdb.*", "structlog.*"]
 ignore_missing_imports = true
 
 # Ported fabric-libs modules — strict typing will be added iteratively.
