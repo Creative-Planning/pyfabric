@@ -65,7 +65,7 @@ class TestRefreshErrors:
             },
         }
 
-        mock._request.side_effect = [post_resp, poll_resp]
+        mock.raw_request.side_effect = [post_resp, poll_resp]
 
         with pytest.raises(RuntimeError, match="Refresh Failed") as exc_info:
             graph.refresh("graph-1", poll_interval=0)
@@ -78,7 +78,7 @@ class TestRefreshErrors:
         error_resp.text = "Internal Server Error"
         error_resp.content = b"Internal Server Error"
 
-        mock._request.return_value = error_resp
+        mock.raw_request.return_value = error_resp
 
         with pytest.raises(FabricError, match="500"):
             graph.refresh("graph-1")

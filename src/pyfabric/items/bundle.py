@@ -34,6 +34,8 @@ from typing import Any
 
 import structlog
 
+from pyfabric.items.crud import encode_part
+
 log = structlog.get_logger()
 
 # ── Platform schema ──────────────────────────────────────────────────────────
@@ -146,17 +148,6 @@ def load_from_disk(artifact_dir: str | Path) -> ArtifactBundle:
 # ── REST upload (fallback for non-git-connected workspaces) ──────────────────
 
 
-def _encode_part(path: str, content: str | bytes) -> dict:
-    """Encode a definition part for the Fabric REST API."""
-    if isinstance(content, str):
-        content = content.encode("utf-8")
-    return {
-        "path": path,
-        "payload": base64.b64encode(content).decode("ascii"),
-        "payloadType": "InlineBase64",
-    }
-
-
 def upload_to_workspace(
     bundle: ArtifactBundle,
     client: Any,  # FabricClient
@@ -180,9 +171,9 @@ def upload_to_workspace(
     Returns:
         The created/updated item dict from the API.
     """
-    api_parts = [_encode_part(path, content) for path, content in bundle.parts.items()]
+    api_parts = [encode_part(path, content) for path, content in bundle.parts.items()]
     # Add .platform as a part
-    api_parts.append(_encode_part(".platform", bundle.platform_json()))
+    api_parts.append(encode_part(".platform", bundle.platform_json()))
 
     log.info(
         "%s artifact: %s (%s, %d parts)",

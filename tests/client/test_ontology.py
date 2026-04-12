@@ -9,7 +9,6 @@ from pyfabric.client.ontology import (
     EntityType,
     OntologyBuilder,
     Property,
-    _generate_bigint_id,
     add_entity_type_to_parts,
     build_from_config,
     decode_definition,
@@ -21,6 +20,7 @@ from pyfabric.client.ontology import (
     make_property,
     remove_entity_type_from_parts,
 )
+from pyfabric.client.ontology._id_gen import _generate_bigint_id
 
 
 class TestIdGeneration:

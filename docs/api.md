@@ -16,10 +16,9 @@ Authentication and credential management for Microsoft Fabric.
 | `FabricCredential.storage_token` | Token for OneLake DFS (storage.azure.com). |
 | `FabricCredential.sql_token` | Token for SQL analytics endpoints. |
 | `AuthError` | Raised when authentication fails. |
-| `get_token(resource)` | Get a token using the default credential chain. |
 | `get_current_account()` | Return the current `az account show` output as a dict. |
 | `az_login(tenant=None)` | Launch interactive browser login. |
-| `ensure_logged_in(resource, tenant)` | Get a token, triggering login if needed. |
+| `ensure_logged_in(resource, tenant)` | Get a token, triggering login if needed. Creates a fresh credential each call (no global state). |
 
 **Example:**
 
@@ -36,7 +35,8 @@ HTTP client for the Fabric REST API v1 with retry, pagination, and LRO polling.
 
 | Function / Class | Description |
 |-----------------|-------------|
-| `FabricClient(credential=None)` | HTTP client. Accepts FabricCredential, token string, or None (creates default). |
+| `FabricClient(credential=None, *, base_url=None, timeout=None)` | HTTP client. Accepts FabricCredential, token string, or None (creates default). Optional `base_url` and `timeout` for testing. |
+| `FabricClient.raw_request(method, url, body)` | Low-level HTTP request for custom polling patterns. Returns raw `requests.Response`. |
 | `FabricClient.get(path, params)` | GET a single resource. |
 | `FabricClient.get_paged(path, params)` | GET all pages of a paginated collection. |
 | `FabricClient.post(path, body)` | POST with sync (200) and async (202/LRO) support. |
@@ -51,6 +51,9 @@ from pyfabric.client.http import FabricClient
 
 client = FabricClient(cred)
 items = client.get_paged("workspaces/ws-id/items")
+
+# For testing against a mock server:
+test_client = FabricClient(cred, base_url="http://localhost:8000/v1", timeout=5)
 ```
 
 ### pyfabric.client.graph
@@ -89,20 +92,59 @@ with LivyClient(cred, ws_id, lh_id) as livy:
 
 ### pyfabric.client.ontology
 
-Ontology CRUD, builder, and definition helpers for Fabric IQ.
+Ontology CRUD, builder, and definition helpers for Fabric IQ. This is a
+sub-package split into focused modules for maintainability. All public
+symbols are importable from `pyfabric.client.ontology`:
 
-| Function / Class | Description |
-|-----------------|-------------|
+```python
+from pyfabric.client.ontology import OntologyBuilder, create_ontology
+```
+
+#### pyfabric.client.ontology.crud
+
+| Function | Description |
+|----------|-------------|
+| `list_ontologies(client, ws_id)` | List all ontologies in a workspace. |
+| `get_ontology(client, ws_id, ontology_id)` | Get a single ontology. |
+| `create_ontology(client, ws_id, display_name)` | Create an ontology via REST API. |
+| `get_ontology_definition(client, ws_id, ontology_id)` | Get the ontology definition. |
+| `update_ontology_definition(client, ws_id, ontology_id, parts)` | Replace the ontology definition. |
+| `delete_ontology(client, ws_id, ontology_id)` | Delete an ontology. |
+
+#### pyfabric.client.ontology.builder
+
+| Class | Description |
+|-------|-------------|
 | `OntologyBuilder()` | High-level builder for ontology definitions. |
 | `OntologyBuilder.add_entity_type(name, properties)` | Add an entity type. Returns entity type ID. |
 | `OntologyBuilder.add_data_binding(entity_type_id, ...)` | Bind entity properties to a lakehouse table. |
 | `OntologyBuilder.add_relationship(name, source_id, target_id)` | Add a relationship between entity types. |
 | `OntologyBuilder.validate()` | Validate the ontology. Returns list of error messages. |
 | `OntologyBuilder.to_bundle(display_name)` | Build an ArtifactBundle for git-sync format. |
-| `list_ontologies(client, ws_id)` | List all ontologies in a workspace. |
-| `create_ontology(client, ws_id, display_name)` | Create an ontology via REST API. |
+| `Property` | Dataclass for entity type properties. |
+| `EntityType` | Dataclass for ontology entity types. |
+| `DataBinding` | Dataclass for entity-to-table bindings. |
+| `RelationshipType` | Dataclass for relationships between entity types. |
+| `Contextualization` | Dataclass for relationship data bindings. |
+
+#### pyfabric.client.ontology.parts
+
+Low-level definition parts manipulation. Operates on lists of `{path, content}`
+dicts decoded from the API format.
+
+| Function | Description |
+|----------|-------------|
 | `decode_definition(raw)` | Decode an API definition response. |
 | `encode_definition(parts)` | Encode parts back to API format. |
+| `make_property(name, value_type)` | Build a property dict. |
+| `make_entity_type_def(name, properties)` | Build an entity type definition. |
+| `make_relationship_type_def(name, source_id, target_id)` | Build a relationship type definition. |
+| `make_lakehouse_binding(...)` | Build a Lakehouse data binding. |
+| `make_warehouse_binding(...)` | Build a Warehouse data binding. |
+| `make_kql_binding(...)` | Build a KQL (Eventhouse) data binding. |
+| `add_entity_type_to_parts(parts, et_id, definition)` | Add entity type to parts list. |
+| `get_entity_type_from_parts(parts, et_id)` | Get entity type from parts list. |
+| `list_entity_types_from_parts(parts)` | List all entity types. |
 | `build_from_config(config)` | Build ontology from a JSON config dict. |
 
 ### pyfabric.client.ontology_sync

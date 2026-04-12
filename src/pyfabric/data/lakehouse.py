@@ -257,11 +257,12 @@ def _read_delta(
         log.debug("deletionVectors not supported, using file-level fallback")
 
     # Fallback: read individual parquet files with column projection
+    import pyarrow as pa
     import requests as req_mod
 
     file_uris = dt.file_uris()
     hdrs = {"Authorization": f"Bearer {credential.storage_token}"}
-    frames = []
+    arrow_tables = []
 
     for uri in file_uris:
         after_at = uri.split("@onelake.dfs.fabric.microsoft.com/")[1]
@@ -273,13 +274,13 @@ def _read_delta(
             log.warning("Skipping file (HTTP %d): %s", r.status_code, uri[-40:])
             continue
 
-        tbl = pq.read_table(io.BytesIO(r.content), columns=columns)
-        frames.append(tbl.to_pandas())
+        arrow_tables.append(pq.read_table(io.BytesIO(r.content), columns=columns))
 
-    if not frames:
+    if not arrow_tables:
         return pd_mod.DataFrame(columns=columns or [])
 
-    result = pd_mod.concat(frames, ignore_index=True)
+    # Concat at Arrow level (avoids N intermediate pandas DataFrames)
+    result = pa.concat_tables(arrow_tables).to_pandas()
     log.debug(
         "Delta file-level read: %d rows from %d files", len(result), len(file_uris)
     )

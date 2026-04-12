@@ -65,7 +65,13 @@ class FabricClient:
     compat), or None (creates default FabricCredential).
     """
 
-    def __init__(self, credential: FabricCredential | str | None = None):
+    def __init__(
+        self,
+        credential: FabricCredential | str | None = None,
+        *,
+        base_url: str | None = None,
+        timeout: int | None = None,
+    ):
         if isinstance(credential, str):
             self._credential = None
             self._static_token = credential
@@ -76,6 +82,8 @@ class FabricClient:
             self._credential = FabricCredential()
             self._static_token = None
 
+        self._base_url = base_url or BASE_URL
+        self._timeout = timeout or _DEFAULT_TIMEOUT
         self._session = self._create_session()
 
     @staticmethod
@@ -106,6 +114,9 @@ class FabricClient:
             h.update(extra)
         return h
 
+    def _build_url(self, path: str, params: dict | None = None) -> str:
+        return _build_url(path, params, base_url=self._base_url)
+
     # ------------------------------------------------------------------
     # Low-level request
     # ------------------------------------------------------------------
@@ -125,7 +136,7 @@ class FabricClient:
             url,
             headers=self._headers(),
             data=data,
-            timeout=kwargs.get("timeout", _DEFAULT_TIMEOUT),
+            timeout=kwargs.get("timeout", self._timeout),
         )
         log.debug("  -> %d (%d bytes)", resp.status_code, len(resp.content))
         if resp.status_code >= 400:
@@ -188,15 +199,26 @@ class FabricClient:
     # Public API
     # ------------------------------------------------------------------
 
+    def raw_request(
+        self, method: str, url: str, body: Any = None, **kwargs: Any
+    ) -> requests.Response:
+        """Low-level HTTP request for custom polling patterns.
+
+        Unlike post()/get() which handle LRO and pagination automatically,
+        this returns the raw response for callers that need custom handling
+        (e.g., graph refresh with non-standard LRO status values).
+        """
+        return self._request(method, url, body, **kwargs)
+
     def get(self, path: str, params: dict | None = None) -> dict:
         """GET a single resource."""
-        resp = self._request("GET", _build_url(path, params))
+        resp = self._request("GET", self._build_url(path, params))
         return resp.json() if resp.text else {}
 
     def get_paged(self, path: str, params: dict | None = None) -> list:
         """GET all pages of a paginated collection."""
         results = []
-        url = _build_url(path, params)
+        url = self._build_url(path, params)
         while url:
             resp = self._request("GET", url)
             data = resp.json() if resp.text else {}
@@ -214,22 +236,22 @@ class FabricClient:
 
     def post(self, path: str, body: Any = None) -> dict:
         """POST; handles sync (200/201) and async (202/LRO) responses."""
-        return self._submit_and_poll("POST", _build_url(path), body)
+        return self._submit_and_poll("POST", self._build_url(path), body)
 
     def patch(self, path: str, body: Any) -> dict:
         """PATCH; handles sync and async responses."""
-        return self._submit_and_poll("PATCH", _build_url(path), body)
+        return self._submit_and_poll("PATCH", self._build_url(path), body)
 
     def delete(self, path: str) -> None:
         """DELETE a resource."""
-        self._request("DELETE", _build_url(path))
+        self._request("DELETE", self._build_url(path))
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _build_url(path: str, params: dict | None = None) -> str:
-    url = path if path.startswith("http") else f"{BASE_URL}/{path.lstrip('/')}"
+def _build_url(path: str, params: dict | None = None, base_url: str = BASE_URL) -> str:
+    url = path if path.startswith("http") else f"{base_url}/{path.lstrip('/')}"
     if params:
         url = f"{url}?{urllib.parse.urlencode(params)}"
     return url
