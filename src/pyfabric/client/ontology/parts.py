@@ -9,6 +9,10 @@ import re
 
 from pyfabric.client.ontology._id_gen import generate_guid, generate_id
 
+# Compiled regex for CamelCase to snake_case conversion
+_CAMEL_RE1 = re.compile(r"(?<=[a-z0-9])([A-Z])")
+_CAMEL_RE2 = re.compile(r"(?<=[A-Z])([A-Z][a-z])")
+
 
 def decode_definition(raw: dict) -> list[dict]:
     """Decode an API definition response into a list of {path, content} dicts."""
@@ -435,8 +439,8 @@ def remove_contextualization_from_parts(
 
 def entity_name_to_table(name: str) -> str:
     """Convert an entity type name to a Lakehouse table name (snake_case)."""
-    s = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", name)
-    s = re.sub(r"(?<=[A-Z])([A-Z][a-z])", r"_\1", s)
+    s = _CAMEL_RE1.sub(r"_\1", name)
+    s = _CAMEL_RE2.sub(r"_\1", s)
     return s.lower().replace(" ", "_")
 
 

@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 
 import requests
 import structlog
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -25,6 +27,26 @@ log = structlog.get_logger()
 
 ONELAKE_DFS = "https://onelake.dfs.fabric.microsoft.com"
 STORAGE_RESOURCE = "https://storage.azure.com"
+
+# ── Shared HTTP session for connection reuse ─────────────────────────────────
+
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Get or create a shared requests.Session with retry and connection pooling."""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        retry = Retry(
+            total=3,
+            backoff_factor=1.0,
+            status_forcelist=[429, 503],
+            allowed_methods=["GET", "PUT", "PATCH", "DELETE"],
+            respect_retry_after_header=True,
+        )
+        _session.mount("https://", HTTPAdapter(max_retries=retry))
+    return _session
 
 
 # ── URL helpers ──────────────────────────────────────────────────────────────
@@ -70,7 +92,7 @@ def list_paths(
     params = {"resource": "filesystem", "recursive": str(recursive).lower()}
     results = []
     while True:
-        r = requests.get(url, headers=_hdrs(token), params=params)
+        r = _get_session().get(url, headers=_hdrs(token), params=params)
         if r.status_code == 404:
             return []
         r.raise_for_status()
@@ -104,7 +126,7 @@ def list_files(
 def read_file(token: str, ws_id: str, item_id: str, path: str) -> bytes:
     """Download a file at {item_id}/{path}. Raises on HTTP error."""
     url = _dfs_url(ws_id, item_id, urllib.parse.quote(path, safe="/"))
-    r = requests.get(url, headers=_hdrs(token))
+    r = _get_session().get(url, headers=_hdrs(token))
     r.raise_for_status()
     return r.content
 
@@ -112,7 +134,7 @@ def read_file(token: str, ws_id: str, item_id: str, path: str) -> bytes:
 def read_file_by_name(token: str, ws_id: str, ws_relative_name: str) -> bytes:
     """Download using the 'name' field from list_paths (workspace-relative path)."""
     url = f"{ONELAKE_DFS}/{ws_id}/{ws_relative_name}"
-    r = requests.get(url, headers=_hdrs(token))
+    r = _get_session().get(url, headers=_hdrs(token))
     r.raise_for_status()
     return r.content
 
@@ -182,14 +204,16 @@ def upload_file(
     url = _dfs_url(ws_id, item_id, path)
     hdrs = _hdrs(token)
 
-    requests.put(url, headers=hdrs, params={"resource": "file"}).raise_for_status()
-    requests.patch(
+    _get_session().put(
+        url, headers=hdrs, params={"resource": "file"}
+    ).raise_for_status()
+    _get_session().patch(
         url,
         headers={**hdrs, "Content-Type": "application/octet-stream"},
         params={"action": "append", "position": "0"},
         data=data,
     ).raise_for_status()
-    requests.patch(
+    _get_session().patch(
         url,
         headers=hdrs,
         params={"action": "flush", "position": str(len(data))},
@@ -199,7 +223,7 @@ def upload_file(
 def delete_file(token: str, ws_id: str, item_id: str, path: str) -> bool:
     """Delete a file. Returns True if deleted, False if not found."""
     url = _dfs_url(ws_id, item_id, path)
-    r = requests.delete(url, headers=_hdrs(token))
+    r = _get_session().delete(url, headers=_hdrs(token))
     return r.status_code in (200, 202)
 
 

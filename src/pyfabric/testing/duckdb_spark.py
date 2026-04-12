@@ -33,6 +33,14 @@ import structlog
 
 log = structlog.get_logger()
 
+# ── Compiled regex patterns ──────────────────────────────────────────────────
+
+_SHOW_TABLES_RE = re.compile(r"SHOW\s+TABLES\s+(?:IN\s+)?(\w+)", re.IGNORECASE)
+_TABLE_REF_RE = re.compile(r"\b\w+\.\w+(?:\.\w+)?\b")
+
+# DuckDB delta extension install flag
+_delta_installed = False
+
 
 # ── Row and DataFrame ────────────────────────────────────────────────────────
 
@@ -186,9 +194,14 @@ class DuckDBSparkSession:
     """
 
     def __init__(self, lakehouse_root: Path | None = None):
+        global _delta_installed
         self._root = lakehouse_root or Path.cwd() / "local_lakehouse"
         self._conn = duckdb.connect()
-        self._conn.execute("INSTALL delta; LOAD delta;")
+        if not _delta_installed:
+            self._conn.execute("INSTALL delta; LOAD delta;")
+            _delta_installed = True
+        else:
+            self._conn.execute("LOAD delta;")
         self.catalog = Catalog(self._root)
         log.debug("DuckDBSparkSession initialized", lakehouse_root=str(self._root))
 
@@ -208,7 +221,7 @@ class DuckDBSparkSession:
     def _translate(self, query: str) -> str:
         """Rewrite Fabric/Spark SQL idioms to DuckDB-compatible SQL."""
         # SHOW TABLES IN <lakehouse>
-        m = re.match(r"SHOW\s+TABLES\s+(?:IN\s+)?(\w+)", query, re.IGNORECASE)
+        m = _SHOW_TABLES_RE.match(query)
         if m:
             return self._show_tables(m.group(1))
 
@@ -228,7 +241,7 @@ class DuckDBSparkSession:
                 return f"delta_scan('{path.as_posix()}')"
             return match.group(0)
 
-        return re.sub(r"\b\w+\.\w+(?:\.\w+)?\b", replace_ref, query)
+        return _TABLE_REF_RE.sub(replace_ref, query)
 
     def _show_tables(self, lakehouse: str) -> str:
         """Generate SQL that returns SHOW TABLES output for a lakehouse."""
