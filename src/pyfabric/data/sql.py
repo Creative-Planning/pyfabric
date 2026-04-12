@@ -23,16 +23,17 @@ Requirements:
     ODBC Driver 18 for SQL Server must be installed on the system.
 """
 
-import logging
 import struct
 from typing import TYPE_CHECKING
+
+import structlog
 
 if TYPE_CHECKING:
     import pandas as pd
 
 from pyfabric.client.auth import SQL_RESOURCE, FabricCredential
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 class SqlError(Exception):

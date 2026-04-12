@@ -23,12 +23,13 @@ Backward-compatible free functions:
 """
 
 import json
-import logging
 import subprocess
 import time
 from typing import Protocol
 
-log = logging.getLogger(__name__)
+import structlog
+
+log = structlog.get_logger()
 
 # ── Scopes ───────────────────────────────────────────────────────────────────
 

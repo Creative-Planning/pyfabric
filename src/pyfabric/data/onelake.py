@@ -12,16 +12,16 @@ Schema-enabled lakehouses use Tables/dbo/{table}, others use Tables/{table}.
 """
 
 import io
-import logging
 import urllib.parse
 from typing import TYPE_CHECKING
 
 import requests
+import structlog
 
 if TYPE_CHECKING:
     import pandas as pd
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 ONELAKE_DFS = "https://onelake.dfs.fabric.microsoft.com"
 STORAGE_RESOURCE = "https://storage.azure.com"

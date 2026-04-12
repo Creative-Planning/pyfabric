@@ -26,7 +26,7 @@ Usage:
         results = sync_all_entities(client, ws_id, ontology_id, livy, lh_id)
 """
 
-import logging
+import structlog
 
 from .http import FabricClient
 from .livy import LivyClient
@@ -45,7 +45,7 @@ from .ontology import (
     update_ontology_definition,
 )
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 ONTOLOGY_TYPE_TO_SPARK = {
     "String": "STRING",

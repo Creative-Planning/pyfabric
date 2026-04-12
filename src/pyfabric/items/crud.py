@@ -10,11 +10,12 @@ API reference:
 """
 
 import base64
-import logging
+
+import structlog
 
 from pyfabric.client.http import FabricClient
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 # ------------------------------------------------------------------

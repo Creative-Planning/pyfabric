@@ -1,26 +1,27 @@
 """
-Dual-output logging: terse console + verbose JSON Lines file.
+Structured logging for pyfabric using structlog.
 
-Console output is ASCII-safe (no unicode) at INFO level.
-File output is JSON Lines at DEBUG level, written to .logs/.
+Dual output: terse console + verbose JSON Lines file.
+All log output is machine-parseable (JSON) for AI-assisted analysis.
 
 Usage in scripts:
     from pyfabric._logging import setup_logging, get_log_path
     log_path = setup_logging("my_script")
 
 Usage in library modules:
-    import logging
-    log = logging.getLogger(__name__)
-    log.debug("detail for log file")
+    import structlog
+    log = structlog.get_logger()
+    log.debug("detail for log file", workspace_id="ws-1")
     log.info("visible on console")
 """
 
 import datetime
-import json
 import logging
 import re
 import sys
 from pathlib import Path
+
+import structlog
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -38,8 +39,21 @@ def _mask_tokens(text: str) -> str:
     return _TOKEN_RE.sub("[TOKEN]", text)
 
 
+def mask_tokens_processor(logger: object, method_name: str, event_dict: dict) -> dict:
+    """Structlog processor that redacts JWT tokens from all event values."""
+    for key, value in event_dict.items():
+        if isinstance(value, str):
+            event_dict[key] = _mask_tokens(value)
+    return event_dict
+
+
+# ── Stdlib compatibility ─────────────────────────────────────────────────────
+# Keep these for backward compatibility with tests and any code that
+# still references them directly.
+
+
 class TokenMaskingFilter(logging.Filter):
-    """Logging filter that redacts JWT tokens from all log output."""
+    """Logging filter that redacts JWT tokens from stdlib log output."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
@@ -58,13 +72,12 @@ class TokenMaskingFilter(logging.Filter):
         return True
 
 
-# ── JSON Lines formatter ─────────────────────────────────────────────────────
-
-
 class JsonLinesFormatter(logging.Formatter):
-    """Emit one JSON object per log record."""
+    """Emit one JSON object per stdlib log record."""
 
     def format(self, record: logging.LogRecord) -> str:
+        import json
+
         entry = {
             "ts": datetime.datetime.fromtimestamp(
                 record.created, tz=datetime.UTC
@@ -78,15 +91,11 @@ class JsonLinesFormatter(logging.Formatter):
         return json.dumps(entry, default=str)
 
 
-# ── Console formatter ────────────────────────────────────────────────────────
-
-
 class AsciiFormatter(logging.Formatter):
     """Terse console formatter that only emits ASCII-safe characters."""
 
     def format(self, record: logging.LogRecord) -> str:
         msg = record.getMessage()
-        # Encode to ascii, replacing anything that would crash cp1252/ascii
         msg = msg.encode("ascii", errors="replace").decode("ascii")
         if record.exc_info and record.exc_info[0] is not None:
             msg += "\n" + self.formatException(record.exc_info)
@@ -108,23 +117,24 @@ def setup_logging(
     verbose: bool = False,
 ) -> Path:
     """
-    Configure dual logging: console (INFO/DEBUG) + JSON Lines file (DEBUG).
+    Configure structured logging: console (INFO/DEBUG) + JSON Lines file (DEBUG).
 
-    Returns the log file path (for printing on failure).
+    Sets up structlog with processors for token masking and JSON rendering.
+    Also configures stdlib logging for third-party libraries (requests, azure).
+
+    Returns the log file path.
     """
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     log_path = get_log_path(script_name)
 
+    # ── Stdlib logging (for third-party libs: requests, azure, urllib3) ───
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
-
-    # Remove any existing handlers (in case of re-init)
     root.handlers.clear()
 
-    # Token masking on all output
     mask_filter = TokenMaskingFilter()
 
-    # Console: terse, ASCII-safe
+    # Console: terse
     console = logging.StreamHandler(sys.stderr)
     console.setLevel(logging.DEBUG if verbose else logging.INFO)
     console.setFormatter(AsciiFormatter())
@@ -140,5 +150,24 @@ def setup_logging(
 
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("azure").setLevel(logging.WARNING)
+
+    # ── Structlog configuration ──────────────────────────────────────────
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            mask_tokens_processor,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.UnicodeDecoder(),
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
     return log_path

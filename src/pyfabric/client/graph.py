@@ -20,12 +20,13 @@ API reference:
 
 import base64
 import json
-import logging
 import time
+
+import structlog
 
 from .http import FabricClient, FabricError
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 class GraphClient:
