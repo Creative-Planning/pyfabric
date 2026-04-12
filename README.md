@@ -5,8 +5,8 @@
 [![Python](https://img.shields.io/pypi/pyversions/pyfabric)](https://pypi.org/project/pyfabric/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Python libraries helping AI coding assistants create and locally validate
-Microsoft Fabric items compatible with Fabric git sync.
+Python library for creating, validating, and locally testing Microsoft Fabric
+items that are compatible with Fabric git sync.
 
 ## Installation
 
@@ -17,25 +17,76 @@ pip install pyfabric
 ### Optional dependencies
 
 ```bash
-pip install pyfabric[azure]    # Azure auth + REST client
-pip install pyfabric[data]     # OneLake + SQL data access
-pip install pyfabric[testing]  # DuckDB-based local testing fixtures
-pip install pyfabric[all]      # Everything
+pip install pyfabric[azure]    # Azure authentication and REST client
+pip install pyfabric[data]     # OneLake and SQL data access
+pip install pyfabric[testing]  # DuckDB Spark mock and pytest fixtures
+pip install pyfabric[all]      # All optional dependencies
 ```
 
-## Overview
+## Quick start
 
-pyfabric provides utilities for:
+### Validate a Fabric workspace
 
-- Creating Microsoft Fabric item definitions (notebooks, lakehouses,
-  semantic models, environments, variable libraries, pipelines, etc.)
-  programmatically
-- Validating item structures locally before committing to a Fabric
-  git-synced repository
-- Running notebook and pipeline transformations locally against DuckDB
-  to verify data logic without deploying to Fabric
-- Generating correct `.platform` files, directory layouts, and metadata
-  that Fabric git sync expects
+```python
+from pathlib import Path
+from pyfabric.items.validate import validate_workspace
+
+results = validate_workspace(Path("my_workspace/"))
+for r in results:
+    status = "OK" if r.valid else "FAIL"
+    print(f"{status}: {r.item_path.name}")
+    for e in r.errors:
+        print(f"  ERROR: {e.message}")
+```
+
+### List workspaces with the REST client
+
+```python
+from pyfabric.client.auth import FabricCredential
+from pyfabric.client.http import FabricClient
+from pyfabric.workspace.workspaces import list_workspaces
+
+cred = FabricCredential(tenant="contoso")
+client = FabricClient(cred)
+
+for ws in list_workspaces(client):
+    print(f"{ws['displayName']}  {ws['id']}")
+```
+
+### Test notebook logic locally
+
+```python
+# In your test file (pytest)
+def test_my_notebook(fabric_spark, mock_notebookutils):
+    # fabric_spark is a DuckDB-backed SparkSession replacement
+    df = fabric_spark.sql("SELECT 1 AS value, 'hello' AS msg")
+    rows = df.collect()
+    assert rows[0]["value"] == 1
+
+    # mock_notebookutils replaces Fabric notebookutils
+    mock_notebookutils.fs.mkdirs("/output")
+    mock_notebookutils.fs.put("/output/result.txt", "done")
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/api.md) | All sub-packages and their public functions |
+| [Testing Guide](docs/testing.md) | Local testing with DuckDB Spark mock and pytest fixtures |
+| [AI Prompts](docs/prompts.md) | Sample prompts for Claude and Copilot to create Fabric items |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and release process |
+| [CLAUDE.md](CLAUDE.md) | Instructions for AI coding assistants |
+
+## Sub-packages
+
+| Package | Purpose | Install |
+|---------|---------|---------|
+| `pyfabric.client` | Fabric REST API authentication and HTTP client | `pyfabric[azure]` |
+| `pyfabric.items` | Create, validate, and manage Fabric item definitions | (included) |
+| `pyfabric.data` | OneLake, SQL endpoint, and lakehouse table operations | `pyfabric[data]` |
+| `pyfabric.workspace` | Workspace management (list, create, roles) | `pyfabric[azure]` |
+| `pyfabric.testing` | DuckDB Spark mock, notebookutils mock, pytest fixtures | `pyfabric[testing]` |
 
 ## Requirements
 
