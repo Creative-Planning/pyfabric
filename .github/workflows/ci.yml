@@ -47,4 +47,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: pytest --cov=pyfabric --cov-report=term-missing
+      - run: pytest --cov=src/pyfabric --cov-report=term-missing
