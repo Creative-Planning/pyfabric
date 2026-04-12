@@ -1,0 +1,101 @@
+# CLAUDE.md
+
+Instructions for AI coding assistants (Claude, Copilot, etc.) working in
+this repository.
+
+## Project Overview
+
+pyfabric is a Python library for programmatically creating, validating,
+and locally testing Microsoft Fabric items that are compatible with Fabric
+git sync. Target users are AI coding assistants and developers who need to
+generate and test Fabric item definitions locally.
+
+## Technical Stack
+
+- **Python**: 3.12+ (use modern syntax: `type X = ...`, `match`, `X | Y` unions)
+- **Build**: hatchling with hatch-vcs (version from git tags)
+- **Layout**: src-layout (`src/pyfabric/`)
+- **Linting**: ruff (configured in pyproject.toml)
+- **Type checking**: mypy in strict mode
+- **Testing**: pytest (tests in `tests/`)
+- **CI**: GitHub Actions (lint, type-check, test, dependency review)
+
+## Sub-package Structure
+
+```
+src/pyfabric/
+  client/       — Auth, REST API, HTTP client for Fabric service
+  items/        — Create, load, save, validate Fabric item definitions
+  data/         — OneLake DFS, SQL connections, lakehouse table I/O
+  workspace/    — Workspace-level operations
+  testing/      — pytest fixtures, DuckDB Spark mock for users
+  cli.py        — CLI entry point
+```
+
+## Key Conventions
+
+- All code must pass `ruff check`, `ruff format --check`, and `mypy --strict`
+- All public functions and classes must have type annotations
+- Use `X | None` not `typing.Optional[X]`; use `X | Y` not `typing.Union`
+- Use `list`, `dict`, `tuple` not `typing.List`, `typing.Dict`, `typing.Tuple`
+- `from __future__ import annotations` is NOT needed (Python 3.12+)
+- Prefer `pathlib.Path` over `os.path`
+- Prefer dataclasses or named tuples over plain dicts for structured data
+- Tests use pytest fixtures; avoid unittest.TestCase
+- No mutable default arguments
+
+## Running Checks
+
+```bash
+ruff check .             # Lint
+ruff format --check .    # Format check
+mypy src/                # Type check
+pytest                   # Run tests
+```
+
+## Version Management
+
+Version is derived from git tags via hatch-vcs. Do NOT manually edit
+version strings. The file `src/pyfabric/_version.py` is auto-generated
+and must not be committed.
+
+## Dependencies
+
+- Runtime dependencies go in `[project] dependencies` in pyproject.toml
+- Optional dependency groups: `[azure]`, `[data]`, `[testing]`, `[all]`, `[dev]`
+- Keep runtime dependencies minimal — heavy deps belong in optional groups
+
+## Fabric Item Structure (git sync format)
+
+All Fabric items follow this directory structure:
+
+```
+{DisplayName}.{ItemType}/
+  .platform                 # Required: metadata + logicalId (UUID)
+  {definition_files...}     # Item-specific content
+```
+
+The `.platform` file uses schema version 2.0:
+```json
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "{ItemType}",
+    "displayName": "{DisplayName}"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "{UUID}"
+  }
+}
+```
+
+Supported item types: Notebook, Lakehouse, Dataflow, Environment,
+VariableLibrary, SemanticModel, Report, Pipeline, Warehouse.
+
+## What NOT to Do
+
+- Do not add `__version__ = "..."` manually anywhere
+- Do not create setup.py or setup.cfg
+- Do not commit `src/pyfabric/_version.py`
+- Do not use `datetime.utcnow()` — use `datetime.now(timezone.utc)`
