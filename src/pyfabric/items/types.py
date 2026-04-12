@@ -125,9 +125,9 @@ ITEM_TYPES: dict[str, ItemType] = {
     "Environment": ItemType(
         type_name="Environment",
         required_files=[
-            "Libraries/PublicLibraries/environment.yml",
             "Setting/Sparkcompute.yml",
         ],
+        optional_files=["Libraries/PublicLibraries/environment.yml"],
     ),
     "VariableLibrary": ItemType(
         type_name="VariableLibrary",
@@ -149,5 +149,9 @@ ITEM_TYPES: dict[str, ItemType] = {
     "Warehouse": ItemType(
         type_name="Warehouse",
         required_files=[],
+    ),
+    "Map": ItemType(
+        type_name="Map",
+        required_files=["map.json"],
     ),
 }

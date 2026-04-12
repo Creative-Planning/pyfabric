@@ -23,6 +23,7 @@ class TestItemType:
             "Report",
             "Pipeline",
             "Warehouse",
+            "Map",
         }
         registered = {it.type_name for it in ITEM_TYPES.values()}
         assert expected.issubset(registered)
@@ -39,10 +40,10 @@ class TestItemType:
         lh = ITEM_TYPES["Lakehouse"]
         assert "lakehouse.metadata.json" in lh.required_files
 
-    def test_environment_requires_nested_files(self):
+    def test_environment_requires_sparkcompute(self):
         env = ITEM_TYPES["Environment"]
-        assert "Libraries/PublicLibraries/environment.yml" in env.required_files
         assert "Setting/Sparkcompute.yml" in env.required_files
+        assert "Libraries/PublicLibraries/environment.yml" in env.optional_files
 
     def test_variable_library_requires_core_files(self):
         vl = ITEM_TYPES["VariableLibrary"]
