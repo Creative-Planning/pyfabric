@@ -54,6 +54,10 @@ dev = [
     "pyfabric[all]",
     "pytest>=8.0",
     "pytest-cov>=6.0",
+    "pytest-json-report>=1.5",
+    "allpairspy>=2.5",
+    "hypothesis>=6.100",
+    "structlog>=24.0",
     "mypy>=1.13",
     "ruff>=0.8",
     "pip-audit>=2.7",
@@ -116,7 +120,7 @@ warn_unused_ignores = true
 
 # Third-party libraries without type stubs
 [[tool.mypy.overrides]]
-module = ["requests.*", "pyodbc.*", "pyarrow.*", "deltalake.*", "pandas.*", "duckdb.*"]
+module = ["requests.*", "pyodbc.*", "pyarrow.*", "deltalake.*", "pandas.*", "duckdb.*", "structlog.*", "allpairspy.*", "hypothesis.*"]
 ignore_missing_imports = true
 
 # Ported fabric-libs modules — strict typing will be added iteratively.
@@ -142,5 +146,30 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--json-report",
+    "--json-report-file=.test-report.json",
+]
 xfail_strict = true
+markers = [
+    "e2e: end-to-end tests requiring PYFABRIC_TEST_WORKSPACE env var",
+]
+
+# -- Coverage --------------------------------------------------------------
+
+[tool.coverage.run]
+branch = true
+source = ["src/pyfabric"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]

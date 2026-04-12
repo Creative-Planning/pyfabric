@@ -2,13 +2,20 @@
 
 No live Azure or Fabric connections required. Tests use:
   - Mock credentials (deterministic fake tokens)
+  - Mock HTTP responses for Fabric API tests
   - Local Delta tables in tmp directories
   - DuckDB for SQL contract testing (optional)
+  - Synthetic Fabric workspace fixtures for E2E validation
 """
 
+import os
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
 
 # ── Mock credential ──────────────────────────────────────────────────────────
 
@@ -39,6 +46,80 @@ class MockCredential:
 def mock_credential():
     """FabricCredential that returns deterministic fake tokens."""
     return MockCredential()
+
+
+# ── Mock HTTP responses ──────────────────────────────────────────────────────
+
+
+def make_response(
+    status_code: int = 200,
+    json_body: dict | list | None = None,
+    headers: dict | None = None,
+    text: str = "",
+) -> MagicMock:
+    """Factory for mock requests.Response objects."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.headers = headers or {}
+    if json_body is not None:
+        resp.json.return_value = json_body
+        resp.text = str(json_body)
+    else:
+        resp.json.return_value = {}
+        resp.text = text
+    resp.content = (text or str(json_body or "")).encode()
+    return resp
+
+
+@pytest.fixture
+def mock_http_response():
+    """Factory fixture for creating mock HTTP responses."""
+    return make_response
+
+
+@pytest.fixture
+def mock_requests_session():
+    """Mock requests.Session for FabricClient tests."""
+    session = MagicMock()
+    session.request.return_value = make_response(200, {})
+    session.get.return_value = make_response(200, {})
+    session.post.return_value = make_response(200, {})
+    session.delete.return_value = make_response(200, {})
+    return session
+
+
+# ── Mock Fabric client ───────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def mock_fabric_client():
+    """FabricClient mock for testing REST interactions."""
+    client = MagicMock()
+    client.get.return_value = {}
+    client.get_paged.return_value = []
+    client.post.return_value = {}
+    client.patch.return_value = {}
+    return client
+
+
+# ── Mock subprocess ──────────────────────────────────────────────────────────
+
+
+def make_subprocess_result(
+    stdout: str = "", stderr: str = "", returncode: int = 0
+) -> MagicMock:
+    """Factory for mock subprocess.CompletedProcess objects."""
+    result = MagicMock()
+    result.stdout = stdout
+    result.stderr = stderr
+    result.returncode = returncode
+    return result
+
+
+@pytest.fixture
+def mock_subprocess_result():
+    """Factory fixture for creating mock subprocess results."""
+    return make_subprocess_result
 
 
 # ── Temp directories ─────────────────────────────────────────────────────────
@@ -89,15 +170,31 @@ def duckdb_conn(tmp_delta_dir):
     conn.close()
 
 
-# ── Mock Fabric client ───────────────────────────────────────────────────────
+# ── Fabric workspace fixtures ────────────────────────────────────────────────
 
 
 @pytest.fixture
-def mock_fabric_client():
-    """FabricClient mock for testing REST interactions."""
-    client = MagicMock()
-    client.get.return_value = {}
-    client.get_paged.return_value = []
-    client.post.return_value = {}
-    client.patch.return_value = {}
-    return client
+def fixture_workspace() -> Path:
+    """Path to the synthetic valid Fabric workspace fixture directory."""
+    return FIXTURES_DIR / "workspace"
+
+
+@pytest.fixture
+def fixture_workspace_invalid() -> Path:
+    """Path to the synthetic invalid Fabric workspace fixture directory."""
+    return FIXTURES_DIR / "workspace_invalid"
+
+
+@pytest.fixture
+def real_workspace() -> Path | None:
+    """Path to a real Fabric workspace for E2E testing.
+
+    Set the PYFABRIC_TEST_WORKSPACE environment variable to enable.
+    Returns None if the env var is not set.
+    """
+    ws_path = os.environ.get("PYFABRIC_TEST_WORKSPACE")
+    if ws_path:
+        p = Path(ws_path)
+        if p.is_dir():
+            return p
+    return None
