@@ -1,5 +1,6 @@
 version: 2
 updates:
+  # Keep GitHub Actions current (no CVE tracking for Actions)
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -9,11 +10,13 @@ updates:
         patterns:
           - "*"
 
+  # Python deps: security updates ONLY (CVE-driven)
+  # Version updates are handled by Dependabot security updates (repo setting),
+  # not dependabot.yml version updates. This entry ensures the dependency
+  # graph stays current for vulnerability scanning without auto-bumping
+  # versions that have no known CVEs.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-    groups:
-      python-deps:
-        patterns:
-          - "*"
+    open-pull-requests-limit: 0  # Disable version update PRs
