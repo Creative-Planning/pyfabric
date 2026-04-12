@@ -170,6 +170,23 @@ def duckdb_conn(tmp_delta_dir):
     conn.close()
 
 
+@pytest.fixture(scope="session")
+def sample_db():
+    """Session-scoped sample DuckDB database with representative tables.
+
+    Tables: dbo.products, dbo.customers, dbo.orders, dbo.sensor_readings,
+    dbo.audit_log (empty), dbo.wide_record. Covers strings, integers,
+    decimals, timestamps, booleans, NULLs, empty strings, unicode, and
+    edge cases for QA testing.
+    """
+    from tests.fixtures.create_sample_db import create_sample_db
+
+    conn = create_sample_db(FIXTURES_DIR / "sample.duckdb")
+    yield conn
+    conn.close()
+    (FIXTURES_DIR / "sample.duckdb").unlink(missing_ok=True)
+
+
 # ── Fabric workspace fixtures ────────────────────────────────────────────────
 
 

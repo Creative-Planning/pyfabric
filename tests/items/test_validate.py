@@ -85,6 +85,23 @@ class TestValidateItem:
         result = validate_item(item_dir)
         assert result.valid
 
+    def test_valid_environment_custom_libs_only(self, tmp_path: Path):
+        """Environment with custom libraries but no environment.yml is valid."""
+        item_dir = _create_item(
+            tmp_path,
+            "env_custom",
+            "Environment",
+            {
+                "Setting/Sparkcompute.yml": "runtime_version: 1.3\n",
+            },
+        )
+        # Add a custom library file (not in required/optional, just present)
+        whl_dir = item_dir / "Libraries" / "CustomLibraries"
+        whl_dir.mkdir(parents=True)
+        (whl_dir / "mylib-0.1.0-py3-none-any.whl").write_bytes(b"fake whl")
+        result = validate_item(item_dir)
+        assert result.valid
+
     def test_environment_missing_sparkcompute(self, tmp_path: Path):
         item_dir = _create_item(
             tmp_path,

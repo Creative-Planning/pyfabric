@@ -4,6 +4,7 @@ src/pyfabric/_version.py
 # Test artifacts
 .test-report.json
 .logs/
+tests/fixtures/sample.duckdb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
