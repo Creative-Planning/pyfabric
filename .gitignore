@@ -1,6 +1,10 @@
 # hatch-vcs generated version file
 src/pyfabric/_version.py
 
+# Test artifacts
+.test-report.json
+.logs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

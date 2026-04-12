@@ -1,0 +1,6 @@
+enable_native_execution_engine: false
+runtime_version: 1.3
+dynamic_executor_allocation:
+  enabled: true
+  min_executors: 1
+  max_executors: 9
