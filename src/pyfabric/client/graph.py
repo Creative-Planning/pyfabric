@@ -117,11 +117,9 @@ class GraphClient:
         operations (status "Completed" instead of "Succeeded", and a
         failureReason field), so we handle polling manually.
         """
-        from .http import BASE_URL
-
         path = self._path(graph_id, "jobs/refreshGraph/instances")
-        url = f"{BASE_URL}/{path}"
-        resp = self._client._request("POST", url)
+        url = self._client._build_url(path)
+        resp = self._client.raw_request("POST", url)
 
         if resp.status_code == 200:
             log.info("Refresh completed immediately")
@@ -137,7 +135,7 @@ class GraphClient:
 
             while True:
                 time.sleep(retry_after)
-                poll_resp = self._client._request("GET", location)
+                poll_resp = self._client.raw_request("GET", location)
                 body = poll_resp.json() if poll_resp.text else {}
                 status = body.get("status", "Unknown")
                 log.debug("Refresh status: %s", status)

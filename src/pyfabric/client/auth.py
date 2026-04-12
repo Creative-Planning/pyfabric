@@ -222,24 +222,7 @@ class FabricCredential:
         return get_current_account()
 
 
-# ── Free functions (backward compatibility) ──────────────────────────────────
-
-_default_credential: FabricCredential | None = None
-
-
-def _get_default() -> FabricCredential:
-    global _default_credential
-    if _default_credential is None:
-        _default_credential = FabricCredential()
-    return _default_credential
-
-
-def get_token(resource: str = FABRIC_RESOURCE) -> str:
-    """Get a token using the default credential chain.
-
-    Backward-compatible with the original auth.py signature.
-    """
-    return _get_default().get_token(resource)
+# ── Free functions ────────────────────────────────────────────────────────────
 
 
 def get_current_account() -> dict:
@@ -278,11 +261,14 @@ def az_login(tenant: str | None = None) -> dict:
 
 
 def ensure_logged_in(resource: str = FABRIC_RESOURCE, tenant: str | None = None) -> str:
-    """Get a token, triggering interactive login if needed."""
+    """Get a token, triggering interactive login if needed.
+
+    Creates a fresh FabricCredential for each call (no global state).
+    """
+    cred = FabricCredential(tenant=tenant)
     try:
-        return get_token(resource)
+        return cred.get_token(resource)
     except AuthError:
         az_login(tenant)
-        global _default_credential
-        _default_credential = None  # reset after re-login
-        return get_token(resource)
+        cred = FabricCredential(tenant=tenant)
+        return cred.get_token(resource)
