@@ -93,7 +93,8 @@ class _TokenResult:
 
 
 class _TokenProvider(Protocol):
-    def get_token(self, scope: str) -> _TokenResult: ...
+    def get_token(self, scope: str) -> _TokenResult:
+        raise NotImplementedError
 
 
 # ── azure.identity provider ──────────────────────────────────────────────────

@@ -178,8 +178,8 @@ class FabricClient:
                     r2 = self._request("GET", result_url)
                     if r2.text:
                         result = r2.json()
-                except FabricError:
-                    pass
+                except FabricError as e:
+                    log.debug("LRO /result fetch failed (optional): %s", e)
             return result
 
         raise FabricError(resp.status_code, resp.text, url)
