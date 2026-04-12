@@ -25,12 +25,11 @@ def _resp(status: int, body: str = "", headers: dict | None = None) -> MagicMock
     r.headers = headers or {}
     r.json.return_value = {}
     if body:
-        try:
-            import json
+        import contextlib
+        import json
 
+        with contextlib.suppress(json.JSONDecodeError):
             r.json.return_value = json.loads(body)
-        except Exception:
-            pass
     return r
 
 

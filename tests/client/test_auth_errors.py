@@ -58,10 +58,14 @@ class TestAzLoginErrors:
         mock_result.stdout = ""
         mock_result.stderr = ""
 
-        with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(AuthError, match="authentication failed") as exc_info:
-                provider.get_token("https://api.fabric.microsoft.com/.default")
-            assert "fabric.microsoft.com" in str(exc_info.value)
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(
+                AuthError,
+                match=r"authentication failed for scope https://api\.fabric\.microsoft\.com",
+            ),
+        ):
+            provider.get_token("https://api.fabric.microsoft.com/.default")
 
     def test_az_cli_token_error_includes_scope(self):
         """Error message should include the scope that was requested."""
@@ -73,12 +77,15 @@ class TestAzLoginErrors:
         mock_result.stdout = ""
         mock_result.stderr = "AADSTS700082: refresh token has expired"
 
-        with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(AuthError, match="authentication failed") as exc_info:
-                provider.get_token("https://storage.azure.com/.default")
-            error_msg = str(exc_info.value)
-            assert "storage.azure.com" in error_msg
-            assert "refresh token has expired" in error_msg
+        with (
+            patch("subprocess.run", return_value=mock_result),
+            pytest.raises(
+                AuthError,
+                match=r"authentication failed for scope https://storage\.azure\.com",
+            ) as exc_info,
+        ):
+            provider.get_token("https://storage.azure.com/.default")
+        assert "refresh token has expired" in str(exc_info.value)
 
 
 class TestGetCurrentAccountErrors:
