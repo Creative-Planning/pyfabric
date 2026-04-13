@@ -153,7 +153,7 @@ Synchronize ontology entity types to Lakehouse tables and data bindings.
 
 | Function / Class | Description |
 |-----------------|-------------|
-| `sync_all_entities(client, ws_id, ontology_id, livy, lh_id)` | Sync all entities to tables and bindings in one round trip. |
+| `sync_all_entities(client, ws_id, ontology_id, livy, lh_id, *, entity_ids=None, table_map=None)` | Sync all (or specified) entities to tables and bindings in one round trip. |
 | `sync_entity_to_lakehouse(client, ws_id, ontology_id, entity_type_id, livy, lh_id, table_name)` | Sync a single entity type. |
 
 ---
