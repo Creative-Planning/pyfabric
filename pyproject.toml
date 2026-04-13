@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [
-    { name = "Creative Planning", email = "engineering@creativeplanning.com" },
+    { name = "Creative Planning", email = "20804442+hughdecatte@users.noreply.github.com" },
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

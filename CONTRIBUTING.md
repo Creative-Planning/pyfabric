@@ -44,51 +44,20 @@ pip-audit                  # Vulnerability scan
 
 Squash merge is the only merge strategy enabled on this repo.
 
-### Commit Signing
-
-The `main` branch requires signed commits. Because all PRs are squash
-merged through the GitHub UI, **GitHub signs the squash commit
-automatically** — you do not need to configure commit signing on your
-machine to contribute via pull requests.
-
-If you want verified signatures on your own branch commits (optional),
-configure SSH signing:
-
-1. Generate or import an ed25519 SSH key
-2. Add the public key to your GitHub account as a **signing key**
-   (Settings > SSH and GPG keys > New SSH key > Key type: Signing key)
-3. Configure git:
-   ```bash
-   git config --global gpg.format ssh
-   git config --global user.signingkey "key::ssh-ed25519 AAAA...your-public-key..."
-   git config --global commit.gpgsign true
-   ```
-4. On Windows, point git at the Windows OpenSSH binaries so it can reach
-   the system SSH agent:
-   ```bash
-   git config --global core.sshCommand "C:/Windows/System32/OpenSSH/ssh.exe"
-   git config --global gpg.ssh.program "C:/Windows/System32/OpenSSH/ssh-keygen.exe"
-   ```
-5. Ensure the Windows OpenSSH agent service is running (requires
-   administrator PowerShell):
-   ```powershell
-   Set-Service ssh-agent -StartupType Automatic
-   Start-Service ssh-agent
-   ```
-
 ### Pull Request Requirements
 
 All PRs require:
 
 - Passing CI (lint, type check, tests, dependency review)
 - One approving review from a code owner
-- Signed commits on `main` (handled automatically by squash merge)
+
+All PRs are squash merged, so GitHub signs the resulting commit on `main`
+automatically. Local commit signing is not required.
 
 ### Releasing
 
 1. Merge all changes to `main`.
-2. Create a git tag: `git tag v0.1.0`
-3. Push the tag: `git push origin v0.1.0`
-4. Create a GitHub Release from the tag.
-5. The publish workflow handles PyPI upload, SBOM generation, and
+2. Create a GitHub Release via CLI:
+   `gh release create v0.1.0 --target main --title "v0.1.0" --prerelease`
+3. The publish workflow handles PyPI upload, SBOM generation, and
    SLSA attestation automatically.
