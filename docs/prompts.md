@@ -14,47 +14,35 @@ Create a Fabric notebook called nb_load_customers that:
 3. Writes the result to lh_silver.dbo.customers as a Delta table
 4. Uses the pyfabric Fabric notebook format with METADATA, CELL, and MARKDOWN sections
 5. Save it in git-sync format at ws_dev/nb_load_customers.Notebook/
-
-The notebook-content.py should use the standard Fabric format with
-# METADATA, # CELL, and # MARKDOWN section markers.
 ```
 
 ### Lakehouse
 
 ```
-Create a Fabric lakehouse definition called lh_silver in git-sync format.
+Using pyfabric, create a Fabric lakehouse definition called lh_silver in git-sync format.
 It should have:
 - defaultSchema set to "dbo"
 - No shortcuts
 - Standard ALM settings
 
-Save at ws_dev/lh_silver.Lakehouse/ with .platform, lakehouse.metadata.json,
-and alm.settings.json files.
-
-Use pyfabric.items.bundle.ArtifactBundle and save_to_disk() to generate the files.
+Save at ws_dev/lh_silver.Lakehouse
 ```
 
 ### Environment
 
 ```
-Create a Fabric environment definition called env_data_processing.
+Using pyfabric, create a Fabric environment definition called env_data_processing.
 It should:
 - Include pip dependencies: pandas>=2.0, pyarrow>=14.0, deltalake>=0.17
-- Set Spark runtime version to 1.3
-- Enable dynamic executor allocation (1 to 9 executors)
-- Driver: 8 cores, 56g memory
-- Executor: 8 cores, 56g memory
 
 Save in git-sync format at ws_dev/env_data_processing.Environment/
-with the correct nested directory structure:
-  Libraries/PublicLibraries/environment.yml
-  Setting/Sparkcompute.yml
+with the correct nested directory structure
 ```
 
 ### Variable Library
 
 ```
-Create a Fabric variable library called vl_config with:
+Using pyfabric, create a Fabric variable library called vl_config with:
 - Variables: workspace_id (String), lakehouse_id (String), env_name (String)
 - Default values for a dev environment
 - Two value sets: UAT and PROD with appropriate overrides
@@ -69,12 +57,8 @@ not suffixed names (StringVariable, etc.).
 ### Dataflow
 
 ```
-Create a Fabric dataflow definition called df_load_source_data.
-It needs:
-- A .platform file with type "Dataflow"
-- A queryMetadata.json with formatVersion "202502"
-- A placeholder mashup.pq file
-
+Using pyfabric, create a Fabric dataflow definition called df_load_source_data that
+[TODO]
 Save in git-sync format at ws_dev/df_load_source_data.Dataflow/
 ```
 
@@ -82,25 +66,14 @@ Save in git-sync format at ws_dev/df_load_source_data.Dataflow/
 
 ```
 Create a Fabric semantic model definition called sm_sales_analytics.
-It needs:
-- A .platform file with type "SemanticModel"
-- A model.bim file with a basic tabular model containing one table (Sales)
-  with columns: SaleId (Int64), Amount (Decimal), SaleDate (DateTime)
-
+[TODO]
 Save in git-sync format at ws_dev/sm_sales_analytics.SemanticModel/
 ```
 
 ### Pipeline
 
 ```
-Create a Fabric pipeline definition called pl_daily_refresh.
-It needs:
-- A .platform file with type "Pipeline"
-- A pipeline-content.json with a simple pipeline that has two activities:
-  1. A notebook activity that runs nb_load_customers
-  2. A notebook activity that runs nb_transform_data
-
-Save in git-sync format at ws_dev/pl_daily_refresh.Pipeline/
+Using pyfabric, create a Fabric pipeline definition called pl_daily_refresh. It has two activities, first running nb_load_customers then when that completes successfully, runs nb_transform data.
 ```
 
 ## Validating items
@@ -108,21 +81,14 @@ Save in git-sync format at ws_dev/pl_daily_refresh.Pipeline/
 ### Validate a single item
 
 ```
-Use pyfabric to validate the Fabric item at ws_dev/nb_load_customers.Notebook/.
-Check that:
-- The .platform file has valid JSON with type, displayName, and logicalId
-- All required files for a Notebook are present
-- The directory name matches the displayName in .platform
-
-Use pyfabric.items.validate.validate_item() and print any errors.
+Use pyfabric to validate the nb_load_customers notebook
 ```
 
 ### Validate an entire workspace
 
 ```
-Use pyfabric to validate all Fabric items in the workspace at ws_dev/.
+Use pyfabric to validate all Fabric items in the workspace at ws_dev
 Print a summary showing which items pass and which fail.
-Use pyfabric.items.validate.validate_workspace().
 ```
 
 ## Writing and running local tests

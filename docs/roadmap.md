@@ -22,24 +22,19 @@ testing, documentation, and refactored for maintainability.
 
 ## Phase 2: Fabric Item Authoring Depth
 
-Expand supported Fabric item types beyond basic validation to full
-programmatic authoring. The current `ITEM_TYPES` registry has basic
-definitions for: Notebook, Lakehouse, Dataflow, Environment,
-VariableLibrary, SemanticModel, Report, Pipeline, Warehouse, Map.
-
-This phase adds deep authoring support:
+Expand supported Fabric item types:
 
 - **Semantic Models** — full tabular model authoring (model.bim with
   tables, columns, measures, relationships)
 - **Reports** (Power BI) — report definition authoring tied to semantic
   models
-- **Ontologies** — extend OntologyBuilder for full git-sync authoring
 - **Dataflow Gen2** — mashup/Power Query authoring support
 - **Pipelines** — activity graph authoring (notebook activities, copy
   activities, orchestration)
 - **Data Agents** — programmatic data agent definitions
-- **Lakehouses** — add new tables with schemas (not just the lakehouse
+- **Lakehouses** — add new tables with schemas and data (not just the lakehouse
   shell)
+- Integration with Workspace Identity and Azure Key Vault for secure ETL/ELT
 
 ## Phase 3: Event-Driven Automation
 
@@ -47,16 +42,16 @@ This phase adds deep authoring support:
   for activity (file uploaded, file changed) and automatically trigger a
   pipeline or notebook
 - Wire up event-driven patterns for CI/CD and data pipeline automation
+- Integration with Power Automate flows
 
 ## Phase 4: LLM-Powered Data Analysis
 
-Local or online, PHI-compliant data quality analysis:
+Local or online data quality analysis:
 
 - Pull production data from Fabric locally
 - Mask/scramble production data for safe local testing with near-real data
 - Run notebook/pipeline transformations locally against DuckDB
-- Integrate Ollama + user's choice of local LLM model for deep data QA
+- Integrate Ollama + user's choice of local LLM model for deep data QA on sensitive data
 - Compare tables and analyze data state differences using LLM of choice
   (online or local, depending on sensitivity and cost)
-- Anomaly detection, data quality analysis, all on-box when needed
-- Placeholder exists in `pyfabric.testing.analyze` module
+- Anomaly detection, data quality analysis, all on-box when needed so sensitive data doesn't go off-box
