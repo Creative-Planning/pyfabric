@@ -72,6 +72,8 @@ def test_my_notebook(fabric_spark, mock_notebookutils):
 
 | Document | Description |
 |----------|-------------|
+| [Vision](docs/vision.md) | Project mission and design principles |
+| [Roadmap](docs/roadmap.md) | Implementation phases and current status |
 | [API Reference](docs/api.md) | All sub-packages and their public functions |
 | [Testing Guide](docs/testing.md) | Local testing with DuckDB Spark mock and pytest fixtures |
 | [AI Prompts](docs/prompts.md) | Sample prompts for Claude and Copilot to create Fabric items |
@@ -87,6 +89,34 @@ def test_my_notebook(fabric_spark, mock_notebookutils):
 | `pyfabric.data` | OneLake, SQL endpoint, and lakehouse table operations | `pyfabric[data]` |
 | `pyfabric.workspace` | Workspace management (list, create, roles) | `pyfabric[azure]` |
 | `pyfabric.testing` | DuckDB Spark mock, notebookutils mock, pytest fixtures | `pyfabric[testing]` |
+
+## Supply Chain Security
+
+Every release of pyfabric includes supply chain security attestations:
+
+- **SLSA Build Provenance** — each release is built in GitHub Actions and
+  attested with [SLSA provenance](https://slsa.dev/), verifiable with
+  `gh attestation verify`
+- **SBOM (SPDX)** — a Software Bill of Materials in SPDX JSON format is
+  generated for every release and attached as a release asset
+- **PyPI Trusted Publisher** — packages are published to PyPI via
+  [OpenID Connect](https://docs.pypi.org/trusted-publishers/) with no
+  long-lived credentials
+- **Dependency Review** — every PR is scanned for known vulnerabilities
+  via `pip-audit` and GitHub's dependency review action
+
+### Verifying a release
+
+```bash
+# Verify SLSA provenance of a downloaded package
+gh attestation verify pyfabric-*.whl --repo Creative-Planning/pyfabric
+
+# Download the SBOM for a specific release
+gh release download v0.1.0a2 --repo Creative-Planning/pyfabric --pattern "*.spdx.json"
+```
+
+The SBOM for each release is available at:
+`https://github.com/Creative-Planning/pyfabric/releases/download/<tag>/pyfabric-build.spdx.json`
 
 ## Requirements
 
