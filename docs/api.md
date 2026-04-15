@@ -16,9 +16,10 @@ Authentication and credential management for Microsoft Fabric.
 | `FabricCredential.storage_token` | Token for OneLake DFS (storage.azure.com). |
 | `FabricCredential.sql_token` | Token for SQL analytics endpoints. |
 | `AuthError` | Raised when authentication fails. |
+| `get_token(resource=FABRIC_RESOURCE)` | Get a token using the default credential chain. Convenience free function for scripts. |
 | `get_current_account()` | Return the current `az account show` output as a dict. |
 | `az_login(tenant=None)` | Launch interactive browser login. |
-| `ensure_logged_in(resource, tenant)` | Get a token, triggering login if needed. Creates a fresh credential each call (no global state). |
+| `ensure_logged_in(resource, tenant)` | Get a token, triggering login if needed. Resets the default credential after re-login. |
 
 **Example:**
 
