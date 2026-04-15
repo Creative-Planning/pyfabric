@@ -87,7 +87,7 @@ class LocalLakehouse:
         log.info("LocalLakehouse opened", db=str(self.db_path), schema=schema)
 
     @property
-    def conn(self) -> "duckdb_mod.DuckDBPyConnection":
+    def conn(self) -> duckdb_mod.DuckDBPyConnection:
         """Raw DuckDB connection for advanced queries."""
         return self._conn
 
@@ -105,8 +105,7 @@ class LocalLakehouse:
     def table_names(self) -> list[str]:
         """List table names in the local schema."""
         rows = self._conn.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = ?",
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = ?",
             [self.schema],
         ).fetchall()
         return [r[0] for r in rows]
@@ -173,11 +172,11 @@ class LocalLakehouse:
         self._conn.executemany(sql, values)
         return len(values)
 
-    def query_df(self, sql: str) -> "pd.DataFrame":
+    def query_df(self, sql: str) -> pd.DataFrame:
         """Execute SQL and return a pandas DataFrame."""
         return self._conn.execute(sql).fetchdf()
 
-    def query_arrow(self, sql: str) -> "pa.Table":
+    def query_arrow(self, sql: str) -> pa.Table:
         """Execute SQL and return a PyArrow Table."""
         return self._conn.execute(sql).arrow()
 
@@ -189,7 +188,7 @@ class LocalLakehouse:
 
     def push_table(
         self,
-        credential: "FabricCredential",
+        credential: FabricCredential,
         table_name: str,
         *,
         mode: str = "overwrite",
@@ -209,9 +208,7 @@ class LocalLakehouse:
         from pyfabric.data.lakehouse import write_table
 
         # .arrow() returns RecordBatchReader; .read_all() materializes to Table
-        reader = self._conn.execute(
-            f"SELECT * FROM {self.schema}.{table_name}"
-        ).arrow()
+        reader = self._conn.execute(f"SELECT * FROM {self.schema}.{table_name}").arrow()
         arrow_table = reader.read_all() if hasattr(reader, "read_all") else reader
 
         if arrow_table.num_rows == 0:
@@ -232,7 +229,7 @@ class LocalLakehouse:
 
     def push_all(
         self,
-        credential: "FabricCredential",
+        credential: FabricCredential,
         *,
         mode: str = "overwrite",
         tables: list[str] | None = None,
@@ -274,7 +271,7 @@ class LocalLakehouse:
 
     def pull_table(
         self,
-        credential: "FabricCredential",
+        credential: FabricCredential,
         table_name: str,
         *,
         replace: bool = True,
@@ -314,7 +311,7 @@ class LocalLakehouse:
         """Close the DuckDB connection."""
         self._conn.close()
 
-    def __enter__(self) -> "LocalLakehouse":
+    def __enter__(self) -> LocalLakehouse:
         return self
 
     def __exit__(self, *args) -> None:
