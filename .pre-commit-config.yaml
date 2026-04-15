@@ -1,0 +1,30 @@
+# See https://pre-commit.com for more information
+# Run `pre-commit install` once after cloning to enable hooks.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.10
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.20.0
+    hooks:
+      - id: mypy
+        args: [--config-file=pyproject.toml]
+        additional_dependencies:
+          - structlog>=24.0
+          - pytest>=8.0
+        pass_filenames: false
+        entry: mypy src/
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: python -m pytest --no-header -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
