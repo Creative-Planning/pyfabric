@@ -10,6 +10,12 @@ the [MIT License](LICENSE).
 
 ## For Creative Planning Team Members
 
+### Prerequisites
+
+- **Python 3.12+** — required by the project and CI
+- **Git** — for cloning and the pre-commit hook system
+- **pre-commit** — installed automatically with `pip install -e ".[dev]"`, or standalone via `pip install pre-commit`
+
 ### Development Setup
 
 ```bash
@@ -18,9 +24,29 @@ cd pyfabric
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 pip install -e ".[dev]"
+
+# Install git hooks (required — CI will reject what these hooks catch)
+pre-commit install
+pre-commit install --hook-type pre-push
 ```
 
-### Running Checks Locally
+The pre-commit hooks run automatically:
+
+| Hook | Runs on | What it does |
+|------|---------|--------------|
+| `ruff check` | `git commit` | Lint with auto-fix |
+| `ruff format` | `git commit` | Format check |
+| `mypy` | `git commit` | Type checking |
+| `pytest` | `git push` | Full test suite |
+
+To run all hooks manually against the full repo:
+
+```bash
+pre-commit run --all-files       # commit-stage hooks
+pre-commit run --all-files --hook-stage pre-push  # push-stage hooks
+```
+
+### Running Checks Individually
 
 ```bash
 ruff check .               # Lint

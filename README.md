@@ -122,6 +122,19 @@ The SBOM for each release is available at:
 
 - Python 3.12 or later
 
+### Developer setup
+
+After cloning, install dev dependencies and git hooks so that lint, format,
+type check, and tests run automatically before commit/push:
+
+```bash
+pip install -e ".[dev]"
+pre-commit install
+pre-commit install --hook-type pre-push
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
+
 ## Contributing
 
 This project is maintained by [Creative Planning](https://www.creativeplanning.com).
