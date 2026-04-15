@@ -224,6 +224,24 @@ class FabricCredential:
 
 # ── Free functions ────────────────────────────────────────────────────────────
 
+_default_credential: FabricCredential | None = None
+
+
+def _get_default() -> FabricCredential:
+    global _default_credential
+    if _default_credential is None:
+        _default_credential = FabricCredential()
+    return _default_credential
+
+
+def get_token(resource: str = FABRIC_RESOURCE) -> str:
+    """Get a token using the default credential chain.
+
+    Uses a module-level credential instance (created on first call).
+    For scripts that need a quick one-liner without managing a credential object.
+    """
+    return _get_default().get_token(resource)
+
 
 def get_current_account() -> dict:
     """Return the current az account show output as a dict, or {} if not logged in."""
@@ -263,12 +281,13 @@ def az_login(tenant: str | None = None) -> dict:
 def ensure_logged_in(resource: str = FABRIC_RESOURCE, tenant: str | None = None) -> str:
     """Get a token, triggering interactive login if needed.
 
-    Creates a fresh FabricCredential for each call (no global state).
+    Resets the default credential after re-login so subsequent
+    get_token() calls use the new session.
     """
-    cred = FabricCredential(tenant=tenant)
     try:
-        return cred.get_token(resource)
+        return get_token(resource)
     except AuthError:
         az_login(tenant)
-        cred = FabricCredential(tenant=tenant)
-        return cred.get_token(resource)
+        global _default_credential
+        _default_credential = None  # reset after re-login
+        return get_token(resource)
