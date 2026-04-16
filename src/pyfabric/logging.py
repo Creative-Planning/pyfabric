@@ -5,7 +5,7 @@ Dual output: terse console + verbose JSON Lines file.
 All log output is machine-parseable (JSON) for AI-assisted analysis.
 
 Usage in scripts:
-    from pyfabric._logging import setup_logging, get_log_path
+    from pyfabric.logging import setup_logging, get_log_path
     log_path = setup_logging("my_script")
 
 Usage in library modules:
@@ -19,7 +19,9 @@ import datetime
 import logging
 import re
 import sys
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -39,7 +41,11 @@ def _mask_tokens(text: str) -> str:
     return _TOKEN_RE.sub("[TOKEN]", text)
 
 
-def mask_tokens_processor(logger: object, method_name: str, event_dict: dict) -> dict:
+def mask_tokens_processor(
+    logger: Any,
+    method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> Mapping[str, Any]:
     """Structlog processor that redacts JWT tokens from all event values."""
     for key, value in event_dict.items():
         if isinstance(value, str):

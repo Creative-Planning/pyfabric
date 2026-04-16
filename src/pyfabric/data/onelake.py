@@ -14,6 +14,7 @@ Schema-enabled lakehouses use Tables/dbo/{table}, others use Tables/{table}.
 import hashlib
 import io
 import os
+import time
 import urllib.parse
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -332,28 +333,69 @@ def upload_file(
     item_id: str,
     path: str,
     data: bytes,
+    *,
+    max_attempts: int = 3,
+    backoff_seconds: float = 1.0,
 ) -> None:
     """Upload bytes to {item_id}/{path} using the DFS 3-step protocol.
 
     Protocol: PUT ?resource=file -> PATCH ?action=append -> PATCH ?action=flush
+
+    The shared session already retries individual 429/503 responses. This
+    function adds whole-operation retry: if a later step (e.g. the ``flush``
+    PATCH) fails transiently after the session has exhausted per-request
+    retries, the entire 3-step sequence is re-attempted from ``PUT`` so the
+    upload ends in a consistent state.
+
+    Retries apply to ``requests.RequestException`` and HTTP 5xx responses.
+    4xx responses other than 429 (already handled by the session) fail fast.
+
+    Args:
+        max_attempts:     Total attempts including the first. ``1`` disables
+                          whole-operation retry.
+        backoff_seconds:  Base for exponential backoff between attempts
+                          (``backoff * 2**n``). Set to ``0`` to disable sleep.
     """
     url = _dfs_url(ws_id, item_id, path)
     hdrs = _hdrs(token)
 
-    _get_session().put(
-        url, headers=hdrs, params={"resource": "file"}
-    ).raise_for_status()
-    _get_session().patch(
-        url,
-        headers={**hdrs, "Content-Type": "application/octet-stream"},
-        params={"action": "append", "position": "0"},
-        data=data,
-    ).raise_for_status()
-    _get_session().patch(
-        url,
-        headers=hdrs,
-        params={"action": "flush", "position": str(len(data))},
-    ).raise_for_status()
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            _get_session().put(
+                url, headers=hdrs, params={"resource": "file"}
+            ).raise_for_status()
+            _get_session().patch(
+                url,
+                headers={**hdrs, "Content-Type": "application/octet-stream"},
+                params={"action": "append", "position": "0"},
+                data=data,
+            ).raise_for_status()
+            _get_session().patch(
+                url,
+                headers=hdrs,
+                params={"action": "flush", "position": str(len(data))},
+            ).raise_for_status()
+            return
+        except requests.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if 400 <= status < 500 and status != 429:
+                raise
+            last_exc = e
+        except requests.RequestException as e:
+            last_exc = e
+
+        if attempt < max_attempts and backoff_seconds > 0:
+            time.sleep(backoff_seconds * (2 ** (attempt - 1)))
+            log.warning(
+                "upload_file retry",
+                path=path,
+                attempt=attempt,
+                error=str(last_exc),
+            )
+
+    assert last_exc is not None
+    raise last_exc
 
 
 def delete_file(token: str, ws_id: str, item_id: str, path: str) -> bool:

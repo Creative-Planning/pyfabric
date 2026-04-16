@@ -335,7 +335,7 @@ AI-powered test and log analysis (placeholder for future Ollama integration).
 
 ---
 
-## pyfabric._logging — Structured Logging
+## pyfabric.logging — Structured Logging
 
 Dual-output logging using structlog: console (terse) and JSON Lines file (verbose).
 

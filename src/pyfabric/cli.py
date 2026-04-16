@@ -24,8 +24,8 @@ from pathlib import Path
 
 import structlog
 
-from pyfabric._logging import setup_logging
 from pyfabric.client.auth import FabricCredential
+from pyfabric.logging import setup_logging
 
 log = structlog.get_logger()
 

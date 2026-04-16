@@ -143,7 +143,6 @@ module = [
     "pyfabric.items.bundle",
     "pyfabric.items.crud",
     "pyfabric.cli",
-    "pyfabric._logging",
 ]
 ignore_errors = true
 
