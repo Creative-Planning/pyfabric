@@ -58,7 +58,76 @@ class TestValidateItem:
         )
         result = validate_item(item_dir)
         assert not result.valid
-        assert any("notebook-content.py" in e.message for e in result.errors)
+        assert any("notebook-content" in e.message for e in result.errors)
+
+    def test_notebook_with_sql_content_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "nb_sql",
+            "Notebook",
+            {"notebook-content.sql": "SELECT 1"},
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_semantic_model_tmdl_format_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "sm_tmdl",
+            "SemanticModel",
+            {"definition.pbism": '{"version": "1.0"}'},
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_semantic_model_legacy_format_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "sm_legacy",
+            "SemanticModel",
+            {"model.bim": '{"model": {}}'},
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_semantic_model_no_content_invalid(self, tmp_path: Path):
+        item_dir = tmp_path / "sm_empty.SemanticModel"
+        item_dir.mkdir()
+        (item_dir / ".platform").write_text(
+            _make_platform("SemanticModel", "sm_empty"), encoding="utf-8"
+        )
+        result = validate_item(item_dir)
+        assert not result.valid
+
+    def test_report_pbir_format_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "rpt_pbir",
+            "Report",
+            {"definition.pbir": '{"version": "1.0"}'},
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_data_pipeline_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "pl_test",
+            "DataPipeline",
+            {"pipeline-content.json": '{"activities": []}'},
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_mirrored_database_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "mdb_test",
+            "MirroredDatabase",
+            {"mirroring.json": '{"config": {}}'},
+        )
+        result = validate_item(item_dir)
+        assert result.valid
 
     def test_valid_lakehouse(self, tmp_path: Path):
         item_dir = _create_item(

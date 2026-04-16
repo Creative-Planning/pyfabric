@@ -94,7 +94,8 @@ The `.platform` file uses schema version 2.0:
 ```
 
 Supported item types: Notebook, Lakehouse, Dataflow, Environment,
-VariableLibrary, SemanticModel, Report, Pipeline, Warehouse.
+VariableLibrary, SemanticModel, Report, DataPipeline, Warehouse,
+MirroredDatabase, Map.
 
 ## What NOT to Do
 
