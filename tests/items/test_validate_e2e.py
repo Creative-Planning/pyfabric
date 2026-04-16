@@ -27,7 +27,7 @@ class TestFixtureWorkspace:
             "VariableLibrary",
             "SemanticModel",
             "Report",
-            "Pipeline",
+            "DataPipeline",
             "Warehouse",
         }
         assert expected == types
@@ -40,7 +40,7 @@ class TestInvalidFixtureWorkspace:
         item_dir = fixture_workspace_invalid / "nb_no_content.Notebook"
         result = validate_item(item_dir)
         assert not result.valid
-        assert any("notebook-content.py" in e.message for e in result.errors)
+        assert any("notebook-content" in e.message for e in result.errors)
 
     def test_bad_platform_detected(self, fixture_workspace_invalid: Path):
         item_dir = fixture_workspace_invalid / "bad_platform.Notebook"

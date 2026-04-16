@@ -101,13 +101,30 @@ def validate_item(item_dir: Path) -> ValidationResult:
             )
         )
 
-    # Check required files
+    # Check required files (AND — all must be present)
     for required_file in item_type_def.required_files:
         if not (item_dir / required_file).exists():
             result.errors.append(
                 ValidationError(
                     f"Required file missing: {required_file}",
                     item_dir / required_file,
+                )
+            )
+
+    # Check alternative required file sets (OR-of-ANDs)
+    if item_type_def.alt_required_files:
+        for file_set in item_type_def.alt_required_files:
+            if all((item_dir / f).exists() for f in file_set):
+                break  # at least one set is satisfied
+        else:
+            # No set was fully satisfied — report which files could work
+            options = " OR ".join(
+                ", ".join(fs) for fs in item_type_def.alt_required_files
+            )
+            result.errors.append(
+                ValidationError(
+                    f"Missing required files: need one of [{options}]",
+                    item_dir,
                 )
             )
 

@@ -167,8 +167,8 @@ Item type definitions and `.platform` file parsing.
 
 | Function / Class | Description |
 |-----------------|-------------|
-| `ITEM_TYPES` | Dict mapping type names to `ItemType` definitions. Registered types: Notebook, Lakehouse, Dataflow, Environment, VariableLibrary, SemanticModel, Report, Pipeline, Warehouse. |
-| `ItemType` | Dataclass with `type_name`, `required_files`, `optional_files`. |
+| `ITEM_TYPES` | Dict mapping type names to `ItemType` definitions. Registered types: Notebook, Lakehouse, Dataflow, Environment, VariableLibrary, SemanticModel, Report, DataPipeline, Warehouse, MirroredDatabase, Ontology, Map. |
+| `ItemType` | Dataclass with `type_name`, `required_files`, `optional_files`, `alt_required_files`. `alt_required_files` lists alternative file sets (OR-of-ANDs) for types with multiple valid formats. |
 | `parse_platform(content)` | Parse a `.platform` JSON file. Returns `PlatformFile` with metadata and config. |
 | `PlatformFile` | Parsed `.platform` with `metadata.type`, `metadata.display_name`, `config.logical_id`. |
 

@@ -1,7 +1,7 @@
 """
 CRUD operations for Microsoft Fabric Workspace Items.
 
-Covers all generic item types (Lakehouse, Notebook, Pipeline, SemanticModel,
+Covers all generic item types (Lakehouse, Notebook, DataPipeline, SemanticModel,
 Report, Dataflow, Warehouse, etc.).  Type-specific operations (e.g. running a
 notebook, loading a table) belong in separate modules.
 
@@ -33,7 +33,7 @@ def list_items(
     List all items in a workspace.
 
     Args:
-        item_type: Optional filter, e.g. "Lakehouse", "Notebook", "Pipeline",
+        item_type: Optional filter, e.g. "Lakehouse", "Notebook", "DataPipeline",
                    "SemanticModel", "Report", "Dataflow", "Warehouse".
     """
     params = {"type": item_type} if item_type else None

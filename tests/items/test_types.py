@@ -21,8 +21,10 @@ class TestItemType:
             "VariableLibrary",
             "SemanticModel",
             "Report",
-            "Pipeline",
+            "DataPipeline",
             "Warehouse",
+            "MirroredDatabase",
+            "Ontology",
             "Map",
         }
         registered = {it.type_name for it in ITEM_TYPES.values()}
@@ -34,7 +36,8 @@ class TestItemType:
 
     def test_notebook_requires_content_file(self):
         nb = ITEM_TYPES["Notebook"]
-        assert "notebook-content.py" in nb.required_files
+        assert ["notebook-content.py"] in nb.alt_required_files
+        assert ["notebook-content.sql"] in nb.alt_required_files
 
     def test_lakehouse_requires_metadata(self):
         lh = ITEM_TYPES["Lakehouse"]

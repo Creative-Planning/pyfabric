@@ -25,7 +25,12 @@ def _minimal_files(item_type: str) -> dict[str, str]:
     it = ITEM_TYPES.get(item_type)
     if not it:
         return {}
-    return {f: f"placeholder content for {f}" for f in it.required_files}
+    files = {f: f"placeholder content for {f}" for f in it.required_files}
+    # For types with alternative file sets, include the first set
+    if it.alt_required_files:
+        for f in it.alt_required_files[0]:
+            files[f] = f"placeholder content for {f}"
+    return files
 
 
 class TestPairwiseValidation:
@@ -43,6 +48,12 @@ class TestPairwiseValidation:
                 p = item_dir / rel_path
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(f"content for {rel_path}", encoding="utf-8")
+            # For types with alternative file sets, create the first set
+            if item_type.alt_required_files:
+                for rel_path in item_type.alt_required_files[0]:
+                    p = item_dir / rel_path
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(f"content for {rel_path}", encoding="utf-8")
 
             result = validate_item(item_dir)
             assert result.valid, f"{type_name}: {[e.message for e in result.errors]}"

@@ -95,11 +95,28 @@ def parse_platform(content: str) -> PlatformFile:
 
 @dataclass(frozen=True)
 class ItemType:
-    """Definition of a Fabric item type and its expected file structure."""
+    """Definition of a Fabric item type and its expected file structure.
+
+    ``required_files`` lists files that must all be present (AND logic).
+    ``alt_required_files`` lists alternative file sets — the item is valid
+    if *any one* set is fully present (OR-of-ANDs).  When both fields are
+    populated, the item must satisfy ``required_files`` AND at least one
+    ``alt_required_files`` set.  When only ``alt_required_files`` is given,
+    the item must satisfy at least one set.
+
+    Example — SemanticModel accepts either legacy (``model.bim``) or
+    TMDL (``definition.pbism``) format::
+
+        ItemType(
+            type_name="SemanticModel",
+            alt_required_files=[["model.bim"], ["definition.pbism"]],
+        )
+    """
 
     type_name: str
     required_files: list[str] = field(default_factory=list)
     optional_files: list[str] = field(default_factory=list)
+    alt_required_files: list[list[str]] = field(default_factory=list)
 
     @property
     def dir_suffix(self) -> str:
@@ -108,20 +125,25 @@ class ItemType:
 
 
 ITEM_TYPES: dict[str, ItemType] = {
+    # ── Notebooks ───────────────────────────────────────────────────────
+    # Content file is either .py (Python/PySpark) or .sql (Spark SQL).
     "Notebook": ItemType(
         type_name="Notebook",
-        required_files=["notebook-content.py"],
+        alt_required_files=[["notebook-content.py"], ["notebook-content.sql"]],
         optional_files=["notebook-settings.json", "fs-settings.json"],
     ),
+    # ── Lakehouses ──────────────────────────────────────────────────────
     "Lakehouse": ItemType(
         type_name="Lakehouse",
         required_files=["lakehouse.metadata.json"],
         optional_files=["alm.settings.json", "shortcuts.metadata.json"],
     ),
+    # ── Dataflows ───────────────────────────────────────────────────────
     "Dataflow": ItemType(
         type_name="Dataflow",
         required_files=["queryMetadata.json", "mashup.pq"],
     ),
+    # ── Environments ────────────────────────────────────────────────────
     "Environment": ItemType(
         type_name="Environment",
         required_files=[
@@ -129,27 +151,46 @@ ITEM_TYPES: dict[str, ItemType] = {
         ],
         optional_files=["Libraries/PublicLibraries/environment.yml"],
     ),
+    # ── Variable Libraries ──────────────────────────────────────────────
     "VariableLibrary": ItemType(
         type_name="VariableLibrary",
         required_files=["variables.json", "settings.json"],
     ),
+    # ── Semantic Models ─────────────────────────────────────────────────
+    # Legacy format uses model.bim; newer TMDL format uses definition.pbism.
     "SemanticModel": ItemType(
         type_name="SemanticModel",
-        required_files=["model.bim"],
+        alt_required_files=[["model.bim"], ["definition.pbism"]],
         optional_files=["definition.pbixproj"],
     ),
+    # ── Reports ─────────────────────────────────────────────────────────
+    # Legacy format uses report.json; PBIR format uses definition.pbir.
     "Report": ItemType(
         type_name="Report",
-        required_files=["report.json"],
+        alt_required_files=[["report.json"], ["definition.pbir"]],
     ),
-    "Pipeline": ItemType(
-        type_name="Pipeline",
+    # ── Data Pipelines ──────────────────────────────────────────────────
+    # Fabric git-sync uses "DataPipeline" as the type string (not "Pipeline").
+    "DataPipeline": ItemType(
+        type_name="DataPipeline",
         required_files=["pipeline-content.json"],
     ),
+    # ── Warehouses ──────────────────────────────────────────────────────
     "Warehouse": ItemType(
         type_name="Warehouse",
         required_files=[],
     ),
+    # ── Mirrored Databases ──────────────────────────────────────────────
+    "MirroredDatabase": ItemType(
+        type_name="MirroredDatabase",
+        required_files=["mirroring.json"],
+    ),
+    # ── Ontologies ──────────────────────────────────────────────────────
+    "Ontology": ItemType(
+        type_name="Ontology",
+        required_files=["definition.json"],
+    ),
+    # ── Maps ────────────────────────────────────────────────────────────
     "Map": ItemType(
         type_name="Map",
         required_files=["map.json"],
