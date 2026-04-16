@@ -45,6 +45,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from pyfabric.data.schema import TableDef
+
 if TYPE_CHECKING:
     import duckdb as duckdb_mod
     import pandas as pd
@@ -84,6 +86,7 @@ class LocalLakehouse:
         self.schema = schema
         self._conn = duckdb_mod.connect(str(self.db_path), read_only=read_only)
         self._conn.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        self._tables: dict[str, TableDef] = {}
         log.info("LocalLakehouse opened", db=str(self.db_path), schema=schema)
 
     @property
@@ -101,6 +104,27 @@ class LocalLakehouse:
         for stmt in statements:
             self._conn.execute(stmt)
         return len(statements)
+
+    def register(self, tables: TableDef | tuple[TableDef, ...] | list[TableDef]) -> int:
+        """Register one or more TableDefs and create the DuckDB tables.
+
+        Registered tables are used by ``insert_typed`` to validate rows
+        before insert. Existing tables are not dropped — DDL uses
+        ``CREATE TABLE IF NOT EXISTS``.
+
+        Returns the number of tables registered.
+        """
+        if isinstance(tables, TableDef):
+            tables = (tables,)
+
+        for table in tables:
+            self._tables[table.name] = table
+            self._conn.execute(table.to_duckdb_ddl(self.schema))
+        return len(tables)
+
+    def registered_tables(self) -> dict[str, TableDef]:
+        """Return a copy of the registered TableDef map."""
+        return dict(self._tables)
 
     def table_names(self) -> list[str]:
         """List table names in the local schema."""
@@ -169,6 +193,68 @@ class LocalLakehouse:
                 vals.append(val)
             values.append(tuple(vals))
 
+        self._conn.executemany(sql, values)
+        return len(values)
+
+    def insert_typed(self, table_name: str, rows: list[dict]) -> int:
+        """Insert rows with strict type validation against a registered TableDef.
+
+        Unlike :meth:`insert`, this method:
+          - Requires the table to have been registered via :meth:`register`.
+          - Validates every row against the TableDef, raising ``ValueError``
+            if any row has a missing non-nullable column, a type mismatch,
+            or an empty string on a non-string column.
+          - Passes date/datetime values through as native objects rather
+            than silently stringifying them.
+
+        Args:
+            table_name: Table name (without schema prefix). Must be registered.
+            rows:       List of row dicts. Keys should match column names.
+
+        Returns:
+            Number of rows inserted.
+
+        Raises:
+            KeyError:   If the table has not been registered.
+            ValueError: If any row fails validation. The message lists each
+                        invalid row's index together with all of its errors.
+        """
+        if not rows:
+            return 0
+
+        if table_name not in self._tables:
+            raise KeyError(
+                f"Table {table_name!r} is not registered. "
+                "Call register() with the TableDef first, "
+                "or use insert() for untyped inserts."
+            )
+
+        table = self._tables[table_name]
+        col_names = table.column_names()
+
+        errors: list[str] = []
+        for idx, row in enumerate(rows):
+            unknown = set(row) - set(col_names)
+            if unknown:
+                errors.append(f"row[{idx}]: unknown columns {sorted(unknown)}")
+            for msg in table.validate_row(row):
+                errors.append(f"row[{idx}]: {msg}")
+
+        if errors:
+            joined = "\n  ".join(errors)
+            raise ValueError(
+                f"insert_typed rejected {len(rows)} row(s) into "
+                f"{self.schema}.{table_name}:\n  {joined}"
+            )
+
+        placeholders = ", ".join(["?"] * len(col_names))
+        cols_sql = ", ".join(col_names)
+        sql = (
+            f"INSERT INTO {self.schema}.{table_name} "
+            f"({cols_sql}) VALUES ({placeholders})"
+        )
+
+        values = [tuple(row.get(cn) for cn in col_names) for row in rows]
         self._conn.executemany(sql, values)
         return len(values)
 
