@@ -11,8 +11,12 @@ OneLake paths are structured as:
 Schema-enabled lakehouses use Tables/dbo/{table}, others use Tables/{table}.
 """
 
+import hashlib
 import io
+import os
 import urllib.parse
+from collections.abc import Iterator, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import requests
@@ -120,6 +124,61 @@ def list_files(
     return files
 
 
+def walk(
+    token: str,
+    ws_id: str,
+    item_id: str,
+    path: str,
+    *,
+    suffix: str | None = None,
+) -> Iterator[dict]:
+    """Recursively yield file entries under {item_id}/{path}.
+
+    Convenience wrapper around :func:`list_paths` for the common "find all
+    PDFs under this folder" pattern. Handles two things callers otherwise
+    reimplement:
+
+      1. Filters out directory entries.
+      2. Normalizes the ``name`` field — DFS returns paths relative to the
+         workspace (``{item_id}/Files/...``), so each entry is augmented
+         with a ``rel_path`` key giving the path relative to ``item_id``
+         (for pass-through to :func:`read_file`) and a ``size`` int.
+
+    Args:
+        suffix: Optional filename suffix filter (case-sensitive).
+
+    Yields:
+        Dicts with at least ``name`` (DFS-native path), ``rel_path``
+        (path relative to item_id), ``size`` (int bytes), plus any other
+        fields returned by the DFS API.
+    """
+    prefix = f"{item_id}/"
+    for entry in list_paths(token, ws_id, item_id, path, recursive=True):
+        if entry.get("isDirectory", "false") == "true":
+            continue
+        name = entry.get("name", "")
+        if suffix and not name.endswith(suffix):
+            continue
+        rel_path = name[len(prefix) :] if name.startswith(prefix) else name
+        yield {
+            **entry,
+            "rel_path": rel_path,
+            "size": int(entry.get("contentLength", 0)),
+        }
+
+
+# ── Hash utility ─────────────────────────────────────────────────────────────
+
+
+def md5_file(path: str | Path, *, chunk_size: int = 8192) -> str:
+    """Compute MD5 hex digest of a file, streaming in chunks."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 # ── Reading ──────────────────────────────────────────────────────────────────
 
 
@@ -137,6 +196,83 @@ def read_file_by_name(token: str, ws_id: str, ws_relative_name: str) -> bytes:
     r = _get_session().get(url, headers=_hdrs(token))
     r.raise_for_status()
     return r.content
+
+
+def download_with_cache(
+    token: str,
+    ws_id: str,
+    item_id: str,
+    rel_path: str,
+    cache_dir: str | Path,
+    *,
+    read_only_caches: Sequence[str | Path] = (),
+    expected_size: int | None = None,
+    expected_md5: str | None = None,
+) -> Path:
+    """Resolve a OneLake file to a local path, downloading only if needed.
+
+    Search order:
+      1. Each directory in ``read_only_caches`` (shared fixture sets,
+         previously downloaded bulk extracts, etc.) — checked in order.
+      2. ``cache_dir`` — the writable cache for this run.
+      3. OneLake — downloaded into ``cache_dir``.
+
+    A cached copy is accepted only if it passes the validation the caller
+    provided. If ``expected_md5`` is given, the file's MD5 must match; else
+    if ``expected_size`` is given, the file's byte size must match; else
+    any existing file at that path is accepted (size check is recommended
+    for any caller that has the metadata).
+
+    Args:
+        rel_path:          File path relative to ``item_id`` (as produced by
+                           :func:`walk`'s ``rel_path`` field).
+        cache_dir:         Writable cache directory. Created if missing.
+        read_only_caches:  Additional directories to check first. Never
+                           written to by this function.
+        expected_size:     Expected byte size for cache validation.
+        expected_md5:      Expected MD5 hex digest for cache validation.
+
+    Returns:
+        Path to the local file.
+
+    Raises:
+        ValueError: If the downloaded file fails ``expected_md5`` check.
+    """
+    rel_os = rel_path.replace("/", os.sep)
+
+    for ro_dir in read_only_caches:
+        candidate = Path(ro_dir) / rel_os
+        if _cache_hit(candidate, expected_size, expected_md5):
+            return candidate
+
+    cache_dir_path = Path(cache_dir)
+    local_path = cache_dir_path / rel_os
+
+    if _cache_hit(local_path, expected_size, expected_md5):
+        return local_path
+
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    data = read_file(token, ws_id, item_id, rel_path)
+    local_path.write_bytes(data)
+
+    if expected_md5 is not None:
+        actual = hashlib.md5(data).hexdigest()
+        if actual != expected_md5:
+            raise ValueError(
+                f"MD5 mismatch for {rel_path}: expected {expected_md5}, got {actual}"
+            )
+
+    return local_path
+
+
+def _cache_hit(path: Path, expected_size: int | None, expected_md5: str | None) -> bool:
+    if not path.exists():
+        return False
+    if expected_md5 is not None:
+        return md5_file(path) == expected_md5
+    if expected_size is not None:
+        return path.stat().st_size == expected_size
+    return True
 
 
 def read_parquet_df(
