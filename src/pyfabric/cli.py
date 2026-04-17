@@ -150,10 +150,61 @@ def run_main(
         sys.exit(1)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Run the pyfabric command-line interface."""
-    print("pyfabric: no commands implemented yet")
-    return 0
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    # First positional arg is the subcommand. Keep dispatch dead-simple so
+    # each subcommand can own its own argparse instance (and --help text).
+    if not argv or argv[0] in ("-h", "--help"):
+        print(
+            "pyfabric — Microsoft Fabric helpers for Python\n"
+            "\n"
+            "Usage:\n"
+            "  pyfabric install-claude-memory [--target DIR] [--force] [--dry-run]\n"
+            "      Install pyfabric's reference memories into your active\n"
+            "      Claude profile (or ~/.claude if none is active).\n"
+            "\n"
+            "  pyfabric emit-context\n"
+            "      Print the memories as portable markdown (no Claude-specific\n"
+            "      frontmatter). Pipe into whatever file your AI assistant\n"
+            "      expects, e.g.:\n"
+            "        pyfabric emit-context > .github/copilot-instructions.md\n"
+            "        pyfabric emit-context > .cursorrules\n"
+            "\n"
+            "  pyfabric --help\n"
+            "      Show this help.\n"
+        )
+        return 0 if argv else 1
+
+    subcommand = argv[0]
+    rest = argv[1:]
+
+    if subcommand == "install-claude-memory":
+        from pyfabric.claude_install import main as install_main
+
+        return install_main(rest)
+
+    if subcommand == "emit-context":
+        from pyfabric.claude_install import emit_context
+
+        if rest and rest[0] in ("-h", "--help"):
+            print(
+                "pyfabric emit-context — print reference memories as portable "
+                "markdown.\n"
+                "\n"
+                "Redirect to whatever file your assistant reads:\n"
+                "  .github/copilot-instructions.md  (GitHub Copilot)\n"
+                "  .cursorrules                     (Cursor)\n"
+                "  .continuerules                   (Continue)\n"
+                "  CONVENTIONS.md                   (Aider)\n"
+            )
+            return 0
+        return emit_context()
+
+    print(f"pyfabric: unknown command '{subcommand}'", file=sys.stderr)
+    print("Run 'pyfabric --help' for available commands.", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

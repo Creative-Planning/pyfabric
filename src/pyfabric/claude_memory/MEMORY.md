@@ -1,0 +1,1 @@
+- [pyfabric reference](pyfabric.md) — how to use pyfabric (auth, workspaces, lakehouse access) from Python in any repo
