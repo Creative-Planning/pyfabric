@@ -96,3 +96,66 @@ class TestWriteTableTimestampNtzWarning:
         )
         events = self._run_write(tbl, fake_credential)
         assert not self._has_ntz_warning(events)
+
+
+class TestWriteTableWithoutPandas:
+    """Regression coverage for CI divergence: dev venvs typically have pandas
+    installed (transitively, via notebook tooling); the CI test env does not.
+    A test that passes locally but fails on CI because pandas is missing is
+    exactly the bug this locks in — so pre-checkin catches it before push.
+    """
+
+    def test_arrow_only_write_table_works_without_pandas(self, monkeypatch):
+        import builtins
+        import importlib
+        import sys
+
+        real_import = builtins.__import__
+
+        def blocked_import(name, *args, **kwargs):
+            if name == "pandas" or name.startswith("pandas."):
+                raise ImportError("simulated: pandas not installed")
+            return real_import(name, *args, **kwargs)
+
+        # Uncache pandas so the next import goes through blocked_import.
+        for mod in [
+            k for k in list(sys.modules) if k == "pandas" or k.startswith("pandas.")
+        ]:
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+        monkeypatch.setattr(builtins, "__import__", blocked_import)
+
+        # Reload the module so its try/except import block re-runs without pandas.
+        from pyfabric.data import lakehouse as lh_mod
+
+        importlib.reload(lh_mod)
+
+        class _FakeCred:
+            storage_token = "fake-token"
+
+        tbl = pa.table(
+            {
+                "id": pa.array([1], type=pa.int64()),
+                "ts": pa.array(
+                    [datetime(2026, 4, 17, 10, 0, 0)], type=pa.timestamp("us")
+                ),
+            }
+        )
+
+        with structlog.testing.capture_logs() as events:
+            result = lh_mod.write_table(
+                _FakeCred(),
+                ws_id="00000000-0000-0000-0000-000000000000",
+                lh_id="00000000-0000-0000-0000-000000000000",
+                table_name="t",
+                data=tbl,
+                schema="dbo",
+                dry_run=True,
+            )
+
+        assert result.row_count == 1
+        assert result.dry_run is True
+        # Warning must still fire without pandas — it uses only pyarrow reflection.
+        assert any(
+            e.get("log_level") == "warning" and "TIMESTAMP_NTZ" in e.get("event", "")
+            for e in events
+        )
