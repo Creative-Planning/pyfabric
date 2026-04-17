@@ -31,15 +31,58 @@ _LINK_RX = re.compile(r"\(([^)]+\.md)\)")
 _FRONTMATTER_RX = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
 
 
-def _default_memory_dir() -> Path:
-    """Resolve the Claude memory directory for the current shell.
-
-    Prefers ``$CLAUDE_CONFIG_DIR/memory`` (an active Claude Sessions profile),
-    otherwise falls back to ``~/.claude/memory`` (the default Claude config).
-    """
+def _claude_config_root() -> Path:
+    """Return the Claude config root — ``$CLAUDE_CONFIG_DIR`` if set, else ``~/.claude``."""
     claude_cfg = os.environ.get("CLAUDE_CONFIG_DIR")
-    root = Path(claude_cfg) if claude_cfg else Path.home() / ".claude"
-    return root / "memory"
+    return Path(claude_cfg) if claude_cfg else Path.home() / ".claude"
+
+
+def _slugify_path(p: Path) -> str:
+    """Convert an absolute path to the project-slug format Claude uses.
+
+    Claude Code stores per-project state under ``<config>/projects/<slug>/``
+    where the slug is the absolute path with ``:``, ``\\``, and ``/``
+    replaced by ``-``. Examples:
+
+    - ``C:\\Users\\dave\\repo`` -> ``C--Users-dave-repo``
+    - ``/home/dave/repo``       -> ``-home-dave-repo``
+    """
+    out = []
+    for ch in str(p.resolve()):
+        out.append("-" if ch in (":", "\\", "/") else ch)
+    return "".join(out)
+
+
+def _find_project_root(start: Path) -> Path:
+    """Walk up from ``start`` looking for ``.git``; fall back to ``start``.
+
+    Claude Code keys project memory off the git repo root, not whichever
+    subdirectory you happened to launch from. Match that behavior so
+    memories land where Claude actually reads them.
+    """
+    start = start.resolve()
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return start
+
+
+def _default_memory_dir(
+    *,
+    project_path: Path | None = None,
+) -> Path:
+    """Resolve the Claude memory directory for this install.
+
+    - ``project_path=None`` (default) — global install: the user home dir's
+      project slug, so memories apply to every Claude session. Path:
+      ``<config>/projects/<slug-of-home>/memory/``.
+    - ``project_path=<some path>`` — scoped install: the git repo root that
+      contains that path, matching Claude's per-project memory layout.
+      Path: ``<config>/projects/<slug-of-repo-root>/memory/``.
+    """
+    root = _claude_config_root()
+    anchor = Path.home() if project_path is None else _find_project_root(project_path)
+    return root / "projects" / _slugify_path(anchor) / "memory"
 
 
 def _iter_package_memory() -> list[tuple[str, str]]:
@@ -93,16 +136,24 @@ def _merge_memory_index(existing: str | None, additions: str) -> tuple[str, int]
 def install(
     target: Path | None = None,
     *,
+    project_path: Path | None = None,
     force: bool = False,
     dry_run: bool = False,
     out: TextIO | None = None,
 ) -> int:
     """Install claude_memory/*.md into the target memory directory.
 
+    - ``target`` — explicit memory dir to write into. If provided, wins.
+    - ``project_path`` — when ``target`` is None, scope the install to the
+      git repo containing this path (falls back to the path itself). If
+      both are None, defaults to a global install under the user home's
+      project slug so every Claude session picks up the memories.
+
     Returns a process exit code (0 success, non-zero on error).
     """
     out = out or sys.stdout
-    target = target or _default_memory_dir()
+    if target is None:
+        target = _default_memory_dir(project_path=project_path)
     try:
         memories = _iter_package_memory()
     except ModuleNotFoundError:
@@ -164,8 +215,8 @@ def install(
     if not os.environ.get("CLAUDE_CONFIG_DIR"):
         print(
             "Note    : no CLAUDE_CONFIG_DIR set — memories went to the default "
-            "~/.claude/. If you activate a profile later, re-run this command "
-            "to install them into that profile.",
+            "~/.claude/. If you use Claude Sessions, activate a profile first "
+            "(claude-use <name>) and re-run to install into that profile.",
             file=out,
         )
     return 0
@@ -234,14 +285,31 @@ def build_parser() -> argparse.ArgumentParser:
         prog="pyfabric install-claude-memory",
         description=(
             "Install pyfabric's Claude reference memories into your active "
-            "Claude profile (or ~/.claude if no profile is active)."
+            "Claude profile. Default is a global install — memories apply "
+            "to every Claude session. Use --project to scope to a single repo."
+        ),
+    )
+    parser.add_argument(
+        "--project",
+        nargs="?",
+        const=".",
+        default=None,
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Install per-project (Claude's git-repo-scoped memory). "
+            "PATH defaults to the current directory; the installer walks up "
+            "to the containing .git root. Omit for the default global install."
         ),
     )
     parser.add_argument(
         "--target",
         type=Path,
         default=None,
-        help="Override target memory dir (default: $CLAUDE_CONFIG_DIR/memory or ~/.claude/memory)",
+        help=(
+            "Explicit memory dir. Overrides both --project and the default "
+            "global install. Useful for testing."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -258,7 +326,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return install(target=args.target, force=args.force, dry_run=args.dry_run)
+    return install(
+        target=args.target,
+        project_path=args.project,
+        force=args.force,
+        dry_run=args.dry_run,
+    )
 
 
 if __name__ == "__main__":
