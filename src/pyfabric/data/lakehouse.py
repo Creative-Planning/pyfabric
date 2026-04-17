@@ -83,13 +83,22 @@ def write_table(
     except ImportError:
         raise RuntimeError("pip install deltalake pyarrow") from None
 
-    import pandas as pd_mod
+    # pandas is only required when the caller passes a DataFrame — keep the
+    # import lazy so Arrow-only callers don't need pandas installed.
+    try:
+        import pandas as pd_mod
+    except ImportError:
+        pd_mod = None  # type: ignore[assignment]
 
     # Convert pandas to Arrow if needed
-    if isinstance(data, pd_mod.DataFrame):
+    if pd_mod is not None and isinstance(data, pd_mod.DataFrame):
         arrow_table = pa_mod.Table.from_pandas(data, preserve_index=False)
-    else:
+    elif isinstance(data, pa_mod.Table):
         arrow_table = data
+    else:
+        raise TypeError(
+            f"data must be a pyarrow.Table or pandas.DataFrame, got {type(data).__name__}"
+        )
 
     table_path = f"Tables/{schema}/{table_name}"
     target = abfss_url(ws_id, lh_id, table_path)
@@ -113,6 +122,26 @@ def write_table(
     if mode not in ("overwrite", "append"):
         raise ValueError(f"Invalid mode '{mode}'. Use 'overwrite' or 'append'.")
 
+    # Naive (tz-less) timestamp columns become Delta TIMESTAMP_NTZ, which the
+    # Fabric SQL analytics endpoint rejects with "Columns of the specified
+    # data types are not supported". Warn once per write so callers can
+    # either add tz='UTC' to the Arrow schema or cast to string before
+    # writing. The warning is informational — the write still proceeds.
+    naive_ts_cols = [
+        f.name
+        for f in arrow_table.schema
+        if pa_mod.types.is_timestamp(f.type) and f.type.tz is None
+    ]
+    if naive_ts_cols:
+        log.warning(
+            "Naive timestamp columns %s will be written as Delta TIMESTAMP_NTZ, "
+            "which the Fabric SQL analytics endpoint does not support. Convert "
+            "to tz-aware UTC (e.g. pa.timestamp('us', tz='UTC')) or cast to "
+            "string (ISO-8601) before writing if downstream consumers use the "
+            "SQL endpoint or Power BI DirectLake.",
+            naive_ts_cols,
+        )
+
     if dry_run:
         log.info(
             "[DRY RUN] Would write %d rows to %s.%s (mode=%s)",
@@ -121,8 +150,15 @@ def write_table(
             table_name,
             mode,
         )
-        preview = arrow_table.slice(0, min(5, row_count)).to_pandas()
-        log.info("[DRY RUN] Preview:\n%s", preview.to_string(index=False))
+        preview_slice = arrow_table.slice(0, min(5, row_count))
+        if pd_mod is not None:
+            log.info(
+                "[DRY RUN] Preview:\n%s",
+                preview_slice.to_pandas().to_string(index=False),
+            )
+        else:
+            # Fall back to Arrow's own repr when pandas isn't installed.
+            log.info("[DRY RUN] Preview:\n%s", preview_slice)
         return WriteResult(
             table_path=table_path,
             row_count=row_count,
