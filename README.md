@@ -23,6 +23,38 @@ pip install pyfabric[testing]  # DuckDB Spark mock and pytest fixtures
 pip install pyfabric[all]      # All optional dependencies
 ```
 
+### AI assistant context (optional)
+
+pyfabric ships with reference memories so any AI coding assistant can learn
+the library without you re-explaining it every session. Two ways to install,
+depending on your assistant:
+
+**Claude Code** — one command, installs into your active Claude profile:
+
+```bash
+pyfabric install-claude-memory            # $CLAUDE_CONFIG_DIR/memory or ~/.claude/memory
+pyfabric install-claude-memory --dry-run  # show what would change
+pyfabric install-claude-memory --force    # overwrite locally-edited copies
+```
+
+Safe to re-run after upgrades — `MEMORY.md` is merged (never overwritten), and
+individual `.md` files are skipped unless `--force` is passed.
+
+**Any other assistant** — emit the memories as portable markdown and redirect
+to whatever file your tool reads:
+
+```bash
+pyfabric emit-context > .github/copilot-instructions.md   # GitHub Copilot
+pyfabric emit-context > .cursorrules                      # Cursor
+pyfabric emit-context > .continuerules                    # Continue
+pyfabric emit-context > CONVENTIONS.md                    # Aider
+```
+
+`emit-context` strips Claude-specific frontmatter and skips the index file,
+so the output is plain markdown any LLM can consume. Commit the generated
+file so teammates' assistants pick it up too, and re-run after upgrading
+pyfabric.
+
 ## Quick start
 
 ### Validate a Fabric workspace

@@ -80,6 +80,9 @@ version-file = "src/pyfabric/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyfabric"]
+# Non-.py files under src/pyfabric/ (e.g. claude_memory/*.md, py.typed) are
+# included automatically by hatchling. `pyfabric install-claude-memory`
+# relies on the claude_memory/ .md files shipping with the wheel.
 
 # -- Ruff ------------------------------------------------------------------
 
