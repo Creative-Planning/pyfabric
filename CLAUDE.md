@@ -95,7 +95,125 @@ The `.platform` file uses schema version 2.0:
 
 Supported item types: Notebook, Lakehouse, Dataflow, Environment,
 VariableLibrary, SemanticModel, Report, DataPipeline, Warehouse,
-MirroredDatabase, Map.
+MirroredDatabase, Map, Ontology.
+
+## Fabric Git-Sync Format Rules
+
+Getting these wrong causes sync failures or infinite round-trip diffs that
+affect all contributors. These rules apply to any repo that uses Fabric
+git-sync, not just pyfabric itself.
+
+### Notebook format (`notebook-content.py`)
+
+**Valid section markers (ONLY these):**
+- `# METADATA ********************`
+- `# CELL ********************`
+- `# MARKDOWN ********************`
+- `# PARAMETERS CELL ********************` (for the single parameter cell — NOT `# PARAMETERS ********************` which causes PyToIPynbFailure)
+
+**Cell ordering:** METADATA → MARKDOWN → PARAMETERS CELL → METADATA → CELL → METADATA → CELL → METADATA (repeating)
+
+**MARKDOWN sections:** Each line prefixed with `# ` (hash space). Blank lines use `# ` too. No bare `#` lines — Fabric strips them on sync, creating round-trip diffs.
+
+**Magic commands** (`%%configure`, `%pip`, etc.): Wrap with `# MAGIC ` prefix. Do NOT put raw `%%configure` as executable Python.
+```
+# CELL ********************
+
+# MAGIC %%configure -f
+# MAGIC {
+# MAGIC   "key": "value"
+# MAGIC }
+```
+
+**`%%configure` must use the `-f` flag** or it causes MagicUsageError requiring session restart.
+
+**Only `notebook-content.py` and `.platform` survive AutoSync.** All other `.py` files in a notebook directory are stripped. Put shared code in a wheel/environment package, not alongside the notebook.
+
+**Fabric-native APIs only:** Notebooks should use pandas, spark, notebookutils/mssparkutils — not external shared libraries. Shared libraries are for local test infrastructure only.
+
+### Notebook Resources folder
+
+Git-sync of the Resources folder is **off by default**. To enable, add `notebook-settings.json` to the notebook directory:
+```json
+{
+  "includeResourcesInGit": "on"
+}
+```
+
+Also add `fs-settings.json`:
+```json
+{
+  "gitExclusions": []
+}
+```
+
+### Data pipelines (`pipeline-content.json`)
+
+Notebook activity type is **`TridentNotebook`** (Fabric's compute engine). Not `SparkNotebook` (Azure Synapse/ADF). Reference notebooks by `notebookId` (logical ID from the notebook's `.platform` file).
+
+### Schema-enabled lakehouses
+
+**Every lakehouse must be created schema-enabled.** Don't suggest — or generate pyfabric code that creates — a non-schema-enabled lakehouse. `lakehouse.metadata.json` must carry `{"defaultSchema": "<schema>"}`; `dbo` is the Fabric default but workspaces commonly use additional schemas (e.g. `pfp` for Projection Financial Projection data). Table paths then become `Tables/{schema}/{table_name}`.
+
+**Notebook Python must use `.saveAsTable("<schema>.<table_name>")`** — schema-qualified. Path-based writes (`.save("abfss://...")`, `.write.format("delta").save(path)`) bypass the schema namespace and break the contract. Same rule for SQL: reference tables as `{schema}.{table}`, never the raw path.
+
+**Never hardcode the schema string.** Put it in the workspace Variable Library and read it:
+- In notebooks: `notebookutils.variableLibrary.getLibrary("vl_workspace_config").<schema_var>` (e.g. `bronze_schema`).
+- In local Python scripts: load the `variables.json` directly (see `vl_workspace_config.VariableLibrary/variables.json` in a consuming repo).
+- Keep a local fallback default next to the variable read so the code works when the Variable Library isn't available (e.g., offline unit tests).
+
+If you see `"dbo"`, `"pfp"`, or any other schema literal in new or edited code, flag it — it should come from the Variable Library.
+
+### Variable Library format
+
+Variable types use **short names only**:
+- `"String"` not `"StringVariable"`
+- `"Integer"` not `"IntegerVariable"`
+- `"Boolean"` not `"BooleanVariable"`
+- `"Guid"` not `"GuidVariable"`
+
+Using the suffixed form causes `InvalidVariableType` error on sync.
+
+File structure:
+```
+vl_name.VariableLibrary/
+  .platform                    # type: "VariableLibrary"
+  variables.json               # variable definitions with default values
+  settings.json                # valueSetsOrder
+  valueSets/
+    UAT.json                   # overrides (empty {} if same as defaults)
+    PROD.json                  # overrides for prod values
+```
+
+### Environment / wheel deployment
+
+AutoSync stages but does **not** auto-publish environments. After pushing a wheel update to git, you must manually Publish in the Fabric UI.
+
+### Line endings (`.gitattributes`)
+
+Fabric writes CRLF with no trailing newline. Any normalization causes infinite sync churn. Use a split strategy:
+
+```gitattributes
+# Fabric-authored artifacts: store byte-for-byte
+*.Lakehouse/** -text
+*.Notebook/** -text
+*.Environment/** -text
+*.Dataflow/** -text
+*.VariableLibrary/** -text
+*.Ontology/** -text
+
+# Our code: normalize to LF
+scripts/** text eol=lf
+src/** text eol=lf
+tests/** text eol=lf
+```
+
+Never renormalize Fabric-authored files.
+
+### Python standards for Fabric code
+
+- Use `datetime.now(timezone.utc)` instead of `datetime.utcnow()` — the latter is deprecated in Python 3.12+ and Fabric Spark runtimes are moving to 3.12+.
+- Import pattern: `from datetime import datetime, timezone` (the class shadows the module, so `datetime.timezone` doesn't work).
 
 ## What NOT to Do
 
