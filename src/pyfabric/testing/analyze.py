@@ -60,7 +60,7 @@ def analyze_log_file(
     the local LLM to summarize findings and recommend actions.
 
     Args:
-        log_path: Path to a .jsonl log file from pyfabric._logging.
+        log_path: Path to a .jsonl log file from pyfabric.logging.
         model: Ollama model name (default: gemma3).
         host: Ollama API endpoint.
 

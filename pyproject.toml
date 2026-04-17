@@ -48,6 +48,7 @@ data = [
 testing = [
     "duckdb>=1.1",
     "deltalake>=0.21",
+    "pyarrow>=17",
     "pytest>=8.0",
 ]
 all = [
@@ -143,7 +144,6 @@ module = [
     "pyfabric.items.bundle",
     "pyfabric.items.crud",
     "pyfabric.cli",
-    "pyfabric._logging",
 ]
 ignore_errors = true
 

@@ -2,7 +2,7 @@
 
 import logging
 
-from pyfabric._logging import (
+from pyfabric.logging import (
     AsciiFormatter,
     JsonLinesFormatter,
     TokenMaskingFilter,

@@ -215,3 +215,107 @@ def all_duckdb_ddl(
 ) -> list[str]:
     """CREATE TABLE statements for a tuple of tables (DuckDB)."""
     return [t.to_duckdb_ddl(schema) for t in tables]
+
+
+# ── Schema drift detection ──────────────────────────────────────────────────
+#
+# Each backend reports column types in its own vocabulary. We normalize them
+# to the internal type_key so drift checks are uniform. Maps live here rather
+# than on TableDef because they're reverse lookups.
+
+_DUCKDB_TO_TYPE_KEY: dict[str, str] = {
+    "VARCHAR": "string",
+    "INTEGER": "int",
+    "BIGINT": "bigint",
+    "DOUBLE": "double",
+    "BOOLEAN": "boolean",
+    "DATE": "date",
+    "TIMESTAMP": "timestamp",
+}
+
+
+def validate_duckdb_schema(
+    table_def: "TableDef",
+    conn: Any,
+    *,
+    schema: str | None = None,
+) -> list[str]:
+    """Compare ``table_def`` against the live DuckDB table. Returns discrepancies.
+
+    Checks for missing columns, extra columns, and type mismatches. Returns
+    an empty list when the actual table matches the definition.
+
+    Args:
+        conn:    DuckDB connection.
+        schema:  DuckDB schema name. ``None`` means the default schema.
+    """
+    if schema:
+        rows = conn.execute(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+            [schema, table_def.name],
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_name = ? ORDER BY ordinal_position",
+            [table_def.name],
+        ).fetchall()
+    actual = {name: (data_type or "").upper() for name, data_type in rows}
+    return _diff(table_def, actual, _DUCKDB_TO_TYPE_KEY)
+
+
+_ARROW_TO_TYPE_KEY: dict[str, str] = {
+    "string": "string",
+    "large_string": "string",
+    "int32": "int",
+    "int64": "bigint",
+    "double": "double",
+    "float": "double",
+    "bool": "boolean",
+    "date32[day]": "date",
+    "timestamp": "timestamp",
+}
+
+
+def validate_arrow_schema(table_def: "TableDef", arrow_schema: Any) -> list[str]:
+    """Compare ``table_def`` against a PyArrow Schema. Returns discrepancies."""
+    actual: dict[str, str] = {}
+    for field in arrow_schema:
+        t = str(field.type)
+        # Timestamps carry unit/tz suffixes; normalize to "timestamp".
+        if t.startswith("timestamp"):
+            t = "timestamp"
+        actual[field.name] = t
+    return _diff(table_def, actual, _ARROW_TO_TYPE_KEY)
+
+
+def _diff(
+    table_def: "TableDef",
+    actual: dict[str, str],
+    mapping: dict[str, str],
+) -> list[str]:
+    errors: list[str] = []
+    if not actual:
+        return [f"table {table_def.name!r} not found"]
+
+    expected_names = {c.name for c in table_def.columns}
+    for c in table_def.columns:
+        if c.name not in actual:
+            errors.append(f"missing column {c.name!r} ({c.type_key})")
+            continue
+        actual_key = mapping.get(actual[c.name])
+        if actual_key is None:
+            errors.append(
+                f"column {c.name!r} has unrecognized backend type {actual[c.name]!r}"
+            )
+            continue
+        if actual_key != c.type_key:
+            errors.append(
+                f"column {c.name!r} type mismatch: expected {c.type_key}, "
+                f"got {actual_key} ({actual[c.name]})"
+            )
+
+    for extra in sorted(set(actual) - expected_names):
+        errors.append(f"unexpected column {extra!r} ({actual[extra]})")
+    return errors
