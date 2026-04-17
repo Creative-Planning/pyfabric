@@ -123,16 +123,30 @@ class TestInstall:
 
 
 class TestPathSlug:
-    def test_slug_replaces_separators_and_colon(self, tmp_path: Path):
+    def test_slug_replaces_all_non_alnum_with_dash(self, tmp_path: Path):
         p = tmp_path / "repo"
         p.mkdir()
         slug = _slugify_path(p)
-        # Slug is the fully-resolved absolute path with : \ / -> -
+        # Slug is the fully-resolved absolute path with any non-alphanumeric
+        # character (except `-`) replaced by `-`.
         assert ":" not in slug
         assert "\\" not in slug
         assert "/" not in slug
         # Trailing component survives
         assert slug.endswith("-repo")
+        # Every char in the result is in the allowed set
+        assert all(c.isalnum() or c == "-" for c in slug)
+
+    def test_slug_replaces_dots_and_underscores(self, tmp_path: Path):
+        # Regression for v0.1.0b4: dotted usernames and underscored repo
+        # names were left un-slugified, so the install landed in a dir
+        # Claude never reads.
+        p = tmp_path / "my_repo.dir"
+        p.mkdir()
+        slug = _slugify_path(p)
+        assert "." not in slug
+        assert "_" not in slug
+        assert slug.endswith("-my-repo-dir")
 
     def test_find_project_root_walks_to_git(self, tmp_path: Path):
         root = tmp_path / "myrepo"

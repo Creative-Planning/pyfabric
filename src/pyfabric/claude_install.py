@@ -41,16 +41,14 @@ def _slugify_path(p: Path) -> str:
     """Convert an absolute path to the project-slug format Claude uses.
 
     Claude Code stores per-project state under ``<config>/projects/<slug>/``
-    where the slug is the absolute path with ``:``, ``\\``, and ``/``
-    replaced by ``-``. Examples:
+    where the slug is the absolute path with every non-alphanumeric
+    character (except ``-``) replaced by ``-`` — so not just separators,
+    but also ``.`` in user names and ``_`` in repo names. Examples:
 
-    - ``C:\\Users\\dave\\repo`` -> ``C--Users-dave-repo``
-    - ``/home/dave/repo``       -> ``-home-dave-repo``
+    - ``C:\\Users\\dave.catlett\\repos\\my_repo`` -> ``C--Users-dave-catlett-repos-my-repo``
+    - ``/home/dave/repo``                         -> ``-home-dave-repo``
     """
-    out = []
-    for ch in str(p.resolve()):
-        out.append("-" if ch in (":", "\\", "/") else ch)
-    return "".join(out)
+    return re.sub(r"[^A-Za-z0-9-]", "-", str(p.resolve()))
 
 
 def _find_project_root(start: Path) -> Path:
