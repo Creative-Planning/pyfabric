@@ -113,6 +113,26 @@ def write_table(
     if mode not in ("overwrite", "append"):
         raise ValueError(f"Invalid mode '{mode}'. Use 'overwrite' or 'append'.")
 
+    # Naive (tz-less) timestamp columns become Delta TIMESTAMP_NTZ, which the
+    # Fabric SQL analytics endpoint rejects with "Columns of the specified
+    # data types are not supported". Warn once per write so callers can
+    # either add tz='UTC' to the Arrow schema or cast to string before
+    # writing. The warning is informational — the write still proceeds.
+    naive_ts_cols = [
+        f.name
+        for f in arrow_table.schema
+        if pa_mod.types.is_timestamp(f.type) and f.type.tz is None
+    ]
+    if naive_ts_cols:
+        log.warning(
+            "Naive timestamp columns %s will be written as Delta TIMESTAMP_NTZ, "
+            "which the Fabric SQL analytics endpoint does not support. Convert "
+            "to tz-aware UTC (e.g. pa.timestamp('us', tz='UTC')) or cast to "
+            "string (ISO-8601) before writing if downstream consumers use the "
+            "SQL endpoint or Power BI DirectLake.",
+            naive_ts_cols,
+        )
+
     if dry_run:
         log.info(
             "[DRY RUN] Would write %d rows to %s.%s (mode=%s)",
