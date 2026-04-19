@@ -14,6 +14,7 @@ from pyfabric.items.report import (
     Page,
     Position,
     Report,
+    ReportError,
     Slicer,
     Table,
     TableOrderBy,
@@ -48,6 +49,7 @@ def report_minimal(basic_page: Page) -> Report:
         name="rpt_test",
         semantic_model_path="../sm_test.SemanticModel",
         pages=[basic_page],
+        description="Test report fixture.",
     )
 
 
@@ -98,7 +100,10 @@ class TestSaveToDisk:
         for v in basic_page.visuals:
             assert v.name == ""
         Report(
-            name="rpt", semantic_model_path="../x.SemanticModel", pages=[basic_page]
+            name="rpt",
+            semantic_model_path="../x.SemanticModel",
+            pages=[basic_page],
+            strict_descriptions=False,
         ).save_to_disk(tmp_path)
         for v in basic_page.visuals:
             assert v.name != ""
@@ -110,6 +115,7 @@ class TestSaveToDisk:
             name="rpt",
             semantic_model_path="../x.SemanticModel",
             pages=[basic_page],
+            strict_descriptions=False,
         ).save_to_disk(tmp_path / "a")
         # Page+visual names persist across saves; rebuild fresh page object
         page2 = Page(
@@ -125,6 +131,7 @@ class TestSaveToDisk:
             name="rpt",
             semantic_model_path="../x.SemanticModel",
             pages=[page2],
+            strict_descriptions=False,
         ).save_to_disk(tmp_path / "b")
         rj_a = json.loads((a / "report.json").read_text("utf-8"))
         rj_b = json.loads((b / "report.json").read_text("utf-8"))
@@ -186,7 +193,9 @@ class TestSlicer:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         rj = _load_report_json(tmp_path / "rpt.Report")
         cfg = _visual_configs(rj)[0]
         assert cfg["singleVisual"]["visualType"] == "slicer"
@@ -209,7 +218,9 @@ class TestSlicer:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         rj = _load_report_json(tmp_path / "rpt.Report")
         cfg = _visual_configs(rj)[0]
         general = cfg["singleVisual"]["objects"]["general"][0]["properties"]
@@ -233,7 +244,9 @@ class TestCard:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         rj = _load_report_json(tmp_path / "rpt.Report")
         cfg = _visual_configs(rj)[0]
         assert cfg["singleVisual"]["visualType"] == "cardVisual"
@@ -254,7 +267,9 @@ class TestCard:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         value = cfg["singleVisual"]["objects"]["value"][0]["properties"]
         assert value["displayUnits"]["expr"]["Literal"]["Value"] == "0D"
@@ -280,7 +295,9 @@ class TestMultiCard:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         objects = cfg["singleVisual"]["objects"]
         # Cards layout style
@@ -311,7 +328,9 @@ class TestMultiCard:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
             "singleVisual"
         ]["objects"]
@@ -328,7 +347,9 @@ class TestMultiCard:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
             "singleVisual"
         ]["objects"]
@@ -342,7 +363,9 @@ class TestMultiCard:
             visuals=[MultiCard(position=Position(x=0, y=0, width=600, height=120))],
         )
         with pytest.raises(ValueError, match="at least one measure"):
-            Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+            Report(
+                "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+            ).save_to_disk(tmp_path)
 
     def test_rejects_mixed_entities(self, tmp_path: Path) -> None:
         page = Page(
@@ -358,7 +381,9 @@ class TestMultiCard:
             ],
         )
         with pytest.raises(ValueError, match="same entity"):
-            Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+            Report(
+                "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+            ).save_to_disk(tmp_path)
 
 
 # ── Table ───────────────────────────────────────────────────────────────────
@@ -386,7 +411,9 @@ class TestTable:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         assert cfg["singleVisual"]["visualType"] == "tableEx"
         projections = cfg["singleVisual"]["projections"]["Values"]
@@ -421,7 +448,9 @@ class TestTable:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         ob = cfg["singleVisual"]["prototypeQuery"]["OrderBy"][0]
         assert ob["Direction"] == 1
@@ -437,7 +466,9 @@ class TestTable:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         assert "OrderBy" not in cfg["singleVisual"]["prototypeQuery"]
 
@@ -447,7 +478,9 @@ class TestTable:
             visuals=[Table(position=Position(x=0, y=0, width=1200, height=300))],
         )
         with pytest.raises(ValueError, match="at least one field"):
-            Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+            Report(
+                "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+            ).save_to_disk(tmp_path)
 
 
 # ── Theme ───────────────────────────────────────────────────────────────────
@@ -473,7 +506,9 @@ class TestTheme:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page], theme=theme).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], theme=theme, strict_descriptions=False
+        ).save_to_disk(tmp_path)
         theme_path = (
             tmp_path
             / "rpt.Report"
@@ -498,7 +533,9 @@ class TestTheme:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page], theme=theme).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], theme=theme, strict_descriptions=False
+        ).save_to_disk(tmp_path)
         rj = _load_report_json(tmp_path / "rpt.Report")
         config = json.loads(rj["config"])
         assert config["themeCollection"]["baseTheme"]["name"] == "MyTheme"
@@ -518,7 +555,9 @@ class TestTheme:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         rj = _load_report_json(tmp_path / "rpt.Report")
         assert "resourcePackages" not in rj
         config = json.loads(rj["config"])
@@ -540,7 +579,9 @@ class TestHierarchySlicer:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         # Single column → one projection, no expansionStates
         assert len(cfg["singleVisual"]["projections"]["Values"]) == 1
@@ -560,7 +601,9 @@ class TestHierarchySlicer:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         proj = cfg["singleVisual"]["projections"]["Values"]
         refs = [p["queryRef"] for p in proj]
@@ -585,7 +628,9 @@ class TestHierarchySlicer:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         mode = cfg["singleVisual"]["objects"]["data"][0]["properties"]["mode"]
         assert mode["expr"]["Literal"]["Value"] == "'Basic'"
@@ -601,7 +646,9 @@ class TestHierarchySlicer:
             ],
         )
         with pytest.raises(ValueError, match="must share an entity"):
-            Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+            Report(
+                "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+            ).save_to_disk(tmp_path)
 
     def test_hierarchy_allow_values_targets_leaf(self, tmp_path: Path) -> None:
         page = Page(
@@ -614,7 +661,9 @@ class TestHierarchySlicer:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
         general = cfg["singleVisual"]["objects"]["general"][0]["properties"]
         prop = general["filter"]["filter"]["Where"][0]["Condition"]["In"][
@@ -638,7 +687,9 @@ class TestMultiCardLabelStyling:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
             "singleVisual"
         ]["objects"]
@@ -657,7 +708,9 @@ class TestMultiCardLabelStyling:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
             "singleVisual"
         ]["objects"]
@@ -676,7 +729,9 @@ class TestMultiCardLabelStyling:
                 ),
             ],
         )
-        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
         objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
             "singleVisual"
         ]["objects"]
@@ -684,3 +739,47 @@ class TestMultiCardLabelStyling:
         td = font_color["solid"]["color"]["expr"]["ThemeDataColor"]
         assert td["ColorId"] == 1
         assert td["Percent"] == 0.6
+
+
+# ── Strict descriptions ────────────────────────────────────────────────────
+
+
+class TestStrictDescriptions:
+    def test_default_strict_blocks_save_when_description_missing(
+        self, basic_page: Page, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ReportError, match="needs a description"):
+            Report(
+                name="rpt",
+                semantic_model_path="../x.SemanticModel",
+                pages=[basic_page],
+            ).save_to_disk(tmp_path)
+
+    def test_description_present_passes(self, basic_page: Page, tmp_path: Path) -> None:
+        Report(
+            name="rpt",
+            semantic_model_path="../x.SemanticModel",
+            pages=[basic_page],
+            description="A real report description.",
+        ).save_to_disk(tmp_path)
+
+    def test_opt_out_succeeds_when_description_missing(
+        self, basic_page: Page, tmp_path: Path
+    ) -> None:
+        Report(
+            name="rpt",
+            semantic_model_path="../x.SemanticModel",
+            pages=[basic_page],
+            strict_descriptions=False,
+        ).save_to_disk(tmp_path)
+
+    def test_whitespace_only_description_treated_as_missing(
+        self, basic_page: Page, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ReportError, match="needs a description"):
+            Report(
+                name="rpt",
+                semantic_model_path="../x.SemanticModel",
+                pages=[basic_page],
+                description="   ",
+            ).save_to_disk(tmp_path)
