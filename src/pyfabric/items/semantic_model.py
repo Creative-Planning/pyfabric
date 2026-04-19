@@ -315,6 +315,15 @@ class SemanticModel:
     ``definition/model.tmdl``, ``definition/expressions.tmdl``,
     ``definition/relationships.tmdl``, ``definition/cultures/<culture>.tmdl``,
     and one ``definition/tables/<name>.tmdl`` per table).
+
+    **Descriptions are required by default.** Every non-hidden Table,
+    Column, and Measure must carry a non-empty ``description`` —
+    pyfabric refuses to emit a model with missing descriptions because
+    those strings power the field-list tooltips and column-header
+    hovers in Power BI / Fabric, and an empty model is a poor
+    consumer experience. ``is_hidden=True`` objects are exempt
+    (they're housekeeping). Set ``strict_descriptions=False`` to opt
+    out (a warning is logged listing every skipped object).
     """
 
     name: str
@@ -325,6 +334,7 @@ class SemanticModel:
     compatibility_level: int = 1567
     culture: str = "en-US"
     annotations: dict[str, str] = field(default_factory=dict)
+    strict_descriptions: bool = True
     logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # ── Validation ──────────────────────────────────────────────────────────
@@ -388,7 +398,48 @@ class SemanticModel:
                     f"{t.name}: source {t.source.name!r} not in model.sources"
                 )
 
+        errors.extend(self._check_descriptions())
         return errors
+
+    def _check_descriptions(self) -> list[str]:
+        """Enforce or warn-on missing descriptions per :attr:`strict_descriptions`.
+
+        Returns errors only when ``strict_descriptions=True``. In the
+        opt-out (``False``) case, emits a structlog warning listing every
+        object that would have failed — so cutting corners is visible in
+        logs and downstream observability.
+        """
+        missing: list[str] = []
+        for t in self.tables:
+            if t.is_hidden:
+                # Hidden tables and everything on them are exempt — they
+                # don't surface in the field list at all.
+                continue
+            if not (t.description or "").strip():
+                missing.append(f"table {t.name!r}")
+            for c in t.columns:
+                if not c.is_hidden and not (c.description or "").strip():
+                    missing.append(f"{t.name}.{c.name} (column)")
+            for m in t.measures:
+                if not m.is_hidden and not (m.description or "").strip():
+                    missing.append(f"{t.name}.{m.name!r} (measure)")
+        if not missing:
+            return []
+        if not self.strict_descriptions:
+            log.warning(
+                "semantic_model has objects without descriptions "
+                "(strict_descriptions=False — opt-out)",
+                model=self.name,
+                missing=missing,
+            )
+            return []
+        return [
+            f"{obj} needs a description (strict_descriptions=True; "
+            "descriptions surface in the Power BI field list and "
+            "hover tooltips). Set is_hidden=True to exempt, or set "
+            "SemanticModel(strict_descriptions=False) to opt out."
+            for obj in missing
+        ]
 
     # ── Emission ────────────────────────────────────────────────────────────
 

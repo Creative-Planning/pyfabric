@@ -30,22 +30,29 @@ def gold() -> LakehouseSource:
 
 @pytest.fixture
 def minimal_model(gold: LakehouseSource) -> SemanticModel:
-    """A small but complete model: 1 dim, 1 fact, 1 relationship, 1 measure."""
+    """A small but complete model: 1 dim, 1 fact, 1 relationship, 1 measure.
+
+    Every visible object has a non-empty description so the fixture
+    passes the strict_descriptions gate; this also documents the
+    expected user-facing pattern.
+    """
     dim = Table(
         name="dim_section",
         source=gold,
+        description="Test dim.",
         columns=[
-            Column("section_key", "string", is_key=True),
-            Column("section_display_name", "string"),
+            Column("section_key", "string", is_key=True, description="PK."),
+            Column("section_display_name", "string", description="Display name."),
         ],
     )
     fact = Table(
         name="fact_status",
         source=gold,
+        description="Test fact.",
         columns=[
-            Column("section_key", "string"),
-            Column("status", "string"),
-            Column("projection_id", "string"),
+            Column("section_key", "string", description="FK to dim_section."),
+            Column("status", "string", description="Per-row status enum."),
+            Column("projection_id", "string", description="Per-row PDF id."),
         ],
         measures=[
             Measure(
@@ -250,6 +257,7 @@ class TestSaveToDisk:
                     measures=[Measure("status", "1")],  # collision
                 ),
             ],
+            strict_descriptions=False,
         )
         with pytest.raises(SemanticModelError, match="collides"):
             bad.save_to_disk(tmp_path)
@@ -395,6 +403,7 @@ class TestAnnotations:
                     annotations={"PBI_NavigationStepName": "Navigation"},
                 ),
             ],
+            strict_descriptions=False,
         )
         item = sm.save_to_disk(tmp_path)
         text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
@@ -415,6 +424,7 @@ class TestAnnotations:
                     annotations={"PBI_ResultType": "Calculated"},
                 ),
             ],
+            strict_descriptions=False,
         )
         item = sm.save_to_disk(tmp_path)
         text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
@@ -441,6 +451,7 @@ class TestAnnotations:
                     ],
                 ),
             ],
+            strict_descriptions=False,
         )
         item = sm.save_to_disk(tmp_path)
         text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
@@ -467,6 +478,7 @@ class TestAnnotations:
                     ],
                 ),
             ],
+            strict_descriptions=False,
         )
         item = sm.save_to_disk(tmp_path)
         text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
@@ -480,8 +492,114 @@ class TestAnnotations:
             sources=[gold],
             tables=[Table(name="t", source=gold, columns=[Column("a", "string")])],
             annotations={"CustomAnnotationKey": "hello"},
+            strict_descriptions=False,
         )
         item = sm.save_to_disk(tmp_path)
         text = (item / "definition" / "model.tmdl").read_text("utf-8")
         assert "annotation PBI_QueryOrder" in text
         assert "annotation CustomAnnotationKey = hello" in text
+
+
+# ── Strict-descriptions enforcement ────────────────────────────────────────
+
+
+class TestStrictDescriptions:
+    def test_default_is_strict(self, gold: LakehouseSource, tmp_path: Path) -> None:
+        # Visible columns/tables/measures missing descriptions → SemanticModelError.
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[Table(name="t", source=gold, columns=[Column("a", "string")])],
+        )
+        with pytest.raises(SemanticModelError, match="needs a description"):
+            sm.save_to_disk(tmp_path)
+
+    def test_error_message_names_each_missing_object(
+        self, gold: LakehouseSource
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    columns=[Column("a", "string"), Column("b", "string")],
+                    measures=[Measure("M", "1")],
+                ),
+            ],
+        )
+        errs = sm.validate()
+        # Each visible object reported individually
+        assert any("table 't'" in e for e in errs)
+        assert any("t.a" in e for e in errs)
+        assert any("t.b" in e for e in errs)
+        assert any("'M'" in e for e in errs)
+
+    def test_hidden_objects_exempt(self, gold: LakehouseSource, tmp_path: Path) -> None:
+        # Hidden columns / measures / tables don't need descriptions.
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    description="Visible table.",
+                    columns=[
+                        Column("visible", "string", description="Visible col."),
+                        Column("hidden_audit_ts", "string", is_hidden=True),
+                    ],
+                    measures=[
+                        Measure("M visible", "1", description="Visible measure."),
+                        Measure("hidden_helper", "1", is_hidden=True),
+                    ],
+                ),
+                Table(
+                    name="hidden_lookup",
+                    source=gold,
+                    is_hidden=True,
+                    columns=[Column("k", "string")],
+                ),
+            ],
+        )
+        # Should not raise — hidden objects exempt
+        sm.save_to_disk(tmp_path)
+
+    def test_opt_out_warns_but_succeeds(
+        self, gold: LakehouseSource, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[Table(name="t", source=gold, columns=[Column("a", "string")])],
+            strict_descriptions=False,
+        )
+        # Doesn't raise; produces a structlog warning naming the missing objects
+        item = sm.save_to_disk(tmp_path)
+        assert (item / "definition" / "model.tmdl").exists()
+
+    def test_whitespace_only_description_treated_as_missing(
+        self, gold: LakehouseSource
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    description="   ",  # whitespace only
+                    columns=[Column("a", "string", description="X.")],
+                ),
+            ],
+        )
+        errs = sm.validate()
+        assert any("table 't'" in e for e in errs)
+
+    def test_minimal_model_with_full_descriptions_passes(
+        self, minimal_model: SemanticModel
+    ) -> None:
+        # The fixture itself is the canonical "good" example — every
+        # visible object has a description.
+        assert minimal_model.validate() == []

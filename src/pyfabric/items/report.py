@@ -361,6 +361,10 @@ class Page:
 # ── Report ──────────────────────────────────────────────────────────────────
 
 
+class ReportError(Exception):
+    """Raised when the report fails pre-emit validation."""
+
+
 @dataclass
 class Report:
     """A full Fabric Report item.
@@ -373,6 +377,11 @@ class Report:
     ``StaticResources/SharedResources/BaseThemes/<theme.name>.json``
     and registers it as the report's base theme. Without a theme,
     Power BI applies its workspace default.
+
+    **A non-empty description is required by default.** Reports show up
+    in the workspace listing and item-info pane; an empty description
+    is a poor consumer experience. Set ``strict_descriptions=False``
+    to opt out (a warning is logged).
     """
 
     name: str
@@ -380,14 +389,44 @@ class Report:
     pages: list[Page]
     description: str = ""
     theme: Theme | None = None
+    strict_descriptions: bool = True
     logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+    def validate(self) -> list[str]:
+        """Return a list of human-readable error messages.
+
+        Empty list means the report passes pre-emit validation. Called
+        automatically from :meth:`save_to_disk`; expose it separately
+        so callers can lint without writing.
+        """
+        errors: list[str] = []
+        if not (self.description or "").strip():
+            if self.strict_descriptions:
+                errors.append(
+                    f"report {self.name!r} needs a description "
+                    f"(strict_descriptions=True; descriptions surface in "
+                    f"the workspace listing and item info pane). Set "
+                    f"Report(strict_descriptions=False) to opt out."
+                )
+            else:
+                log.warning(
+                    "report has no description (strict_descriptions=False — opt-out)",
+                    report=self.name,
+                )
+        return errors
 
     def save_to_disk(self, output_dir: Path | str) -> Path:
         """Emit the full ``<name>.Report`` folder.
 
-        Returns the path to the created folder. All writes route through
+        Returns the path to the created folder. Raises :class:`ReportError`
+        if pre-emit validation fails. All writes route through
         :func:`pyfabric.items.normalize.write_artifact_file`.
         """
+        errors = self.validate()
+        if errors:
+            joined = "\n  - ".join(errors)
+            raise ReportError(f"report {self.name!r} failed validation:\n  - {joined}")
+
         output_dir = Path(output_dir)
         item_dir = output_dir / f"{self.name}.Report"
 
