@@ -17,6 +17,8 @@ from pyfabric.items.report import (
     Slicer,
     Table,
     TableOrderBy,
+    Theme,
+    ThemeColor,
 )
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -446,3 +448,239 @@ class TestTable:
         )
         with pytest.raises(ValueError, match="at least one field"):
             Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+
+
+# ── Theme ───────────────────────────────────────────────────────────────────
+
+
+class TestTheme:
+    def test_theme_file_emitted(self, tmp_path: Path) -> None:
+        theme = Theme(
+            name="MyTheme",
+            content={
+                "name": "MyTheme",
+                "dataColors": ["#118DFF", "#12239E", "#E66C37"],
+                "background": "#FFFFFF",
+                "foreground": "#252423",
+            },
+        )
+        page = Page(
+            display_name="P",
+            visuals=[
+                Card(
+                    position=Position(x=0, y=0, width=200, height=120),
+                    measure=Measure("fact_x", "M"),
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page], theme=theme).save_to_disk(tmp_path)
+        theme_path = (
+            tmp_path
+            / "rpt.Report"
+            / "StaticResources"
+            / "SharedResources"
+            / "BaseThemes"
+            / "MyTheme.json"
+        )
+        assert theme_path.exists()
+        loaded = json.loads(theme_path.read_text("utf-8"))
+        assert loaded["name"] == "MyTheme"
+        assert loaded["dataColors"] == ["#118DFF", "#12239E", "#E66C37"]
+
+    def test_theme_referenced_in_report_config(self, tmp_path: Path) -> None:
+        theme = Theme(name="MyTheme", content={"name": "MyTheme", "dataColors": []})
+        page = Page(
+            display_name="P",
+            visuals=[
+                Card(
+                    position=Position(x=0, y=0, width=200, height=120),
+                    measure=Measure("fact_x", "M"),
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page], theme=theme).save_to_disk(tmp_path)
+        rj = _load_report_json(tmp_path / "rpt.Report")
+        config = json.loads(rj["config"])
+        assert config["themeCollection"]["baseTheme"]["name"] == "MyTheme"
+        # resourcePackages registers the theme file
+        assert (
+            rj["resourcePackages"][0]["resourcePackage"]["items"][0]["name"]
+            == "MyTheme"
+        )
+
+    def test_no_theme_omits_collection_and_resources(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                Card(
+                    position=Position(x=0, y=0, width=200, height=120),
+                    measure=Measure("fact_x", "M"),
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        rj = _load_report_json(tmp_path / "rpt.Report")
+        assert "resourcePackages" not in rj
+        config = json.loads(rj["config"])
+        assert "themeCollection" not in config
+
+
+# ── Hierarchy slicer ───────────────────────────────────────────────────────
+
+
+class TestHierarchySlicer:
+    def test_single_column_unchanged(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                Slicer(
+                    position=Position(x=0, y=0, width=200, height=80),
+                    field=Column("dim_x", "region"),
+                    mode="Dropdown",
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
+        # Single column → one projection, no expansionStates
+        assert len(cfg["singleVisual"]["projections"]["Values"]) == 1
+        assert "expansionStates" not in cfg["singleVisual"]
+
+    def test_multi_column_emits_hierarchy(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                Slicer(
+                    position=Position(x=0, y=0, width=200, height=200),
+                    field=[
+                        Column("dim_x", "report_year"),
+                        Column("dim_x", "report_month"),
+                    ],
+                    mode="Basic",
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
+        proj = cfg["singleVisual"]["projections"]["Values"]
+        refs = [p["queryRef"] for p in proj]
+        assert refs == ["dim_x.report_year", "dim_x.report_month"]
+        # All hierarchy levels collapsed by default
+        ex = cfg["singleVisual"]["expansionStates"][0]["levels"]
+        assert all(level["isCollapsed"] for level in ex)
+        # Mode is Basic for hierarchy
+        mode = cfg["singleVisual"]["objects"]["data"][0]["properties"]["mode"]
+        assert mode["expr"]["Literal"]["Value"] == "'Basic'"
+
+    def test_hierarchy_coerces_to_basic_mode(self, tmp_path: Path) -> None:
+        # Caller asks for Dropdown but provides multi-level field;
+        # emitter coerces to Basic since Dropdown can't render hierarchies.
+        page = Page(
+            display_name="P",
+            visuals=[
+                Slicer(
+                    position=Position(x=0, y=0, width=200, height=200),
+                    field=[Column("dim_x", "year"), Column("dim_x", "month")],
+                    mode="Dropdown",
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
+        mode = cfg["singleVisual"]["objects"]["data"][0]["properties"]["mode"]
+        assert mode["expr"]["Literal"]["Value"] == "'Basic'"
+
+    def test_hierarchy_rejects_cross_entity(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                Slicer(
+                    position=Position(x=0, y=0, width=200, height=200),
+                    field=[Column("dim_x", "a"), Column("dim_y", "b")],
+                ),
+            ],
+        )
+        with pytest.raises(ValueError, match="must share an entity"):
+            Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+
+    def test_hierarchy_allow_values_targets_leaf(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                Slicer(
+                    position=Position(x=0, y=0, width=200, height=200),
+                    field=[Column("dim_x", "year"), Column("dim_x", "month")],
+                    allow_values=["6", "7"],
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
+        general = cfg["singleVisual"]["objects"]["general"][0]["properties"]
+        prop = general["filter"]["filter"]["Where"][0]["Condition"]["In"][
+            "Expressions"
+        ][0]["Column"]["Property"]
+        # Filter targets the deepest level, not the first
+        assert prop == "month"
+
+
+# ── MultiCard label styling ────────────────────────────────────────────────
+
+
+class TestMultiCardLabelStyling:
+    def test_no_label_styling_omits_block(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                MultiCard(
+                    position=Position(x=0, y=0, width=600, height=120),
+                    measures=[Measure("fact_x", "M")],
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
+            "singleVisual"
+        ]["objects"]
+        # When no label knobs set, default: no label override emitted
+        assert "label" not in objects
+
+    def test_label_heading_and_position(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                MultiCard(
+                    position=Position(x=0, y=0, width=600, height=120),
+                    measures=[Measure("fact_x", "M")],
+                    label_heading="Heading2",
+                    label_position="belowValue",
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
+            "singleVisual"
+        ]["objects"]
+        label_props = objects["label"][0]["properties"]
+        assert label_props["heading"]["expr"]["Literal"]["Value"] == "'Heading2'"
+        assert label_props["position"]["expr"]["Literal"]["Value"] == "'belowValue'"
+
+    def test_label_font_color_emits_theme_data_color(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            visuals=[
+                MultiCard(
+                    position=Position(x=0, y=0, width=600, height=120),
+                    measures=[Measure("fact_x", "M")],
+                    label_font_color=ThemeColor(color_id=1, percent=0.6),
+                ),
+            ],
+        )
+        Report("rpt", "../x.SemanticModel", [page]).save_to_disk(tmp_path)
+        objects = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0][
+            "singleVisual"
+        ]["objects"]
+        font_color = objects["label"][0]["properties"]["fontColor"]
+        td = font_color["solid"]["color"]["expr"]["ThemeDataColor"]
+        assert td["ColorId"] == 1
+        assert td["Percent"] == 0.6

@@ -171,6 +171,7 @@ class Column:
     is_hidden: bool = False
     data_category: str | None = None
     source_column: str | None = None  # default = name
+    annotations: dict[str, str] = field(default_factory=dict)
 
 
 # ── Measures ───────────────────────────────────────────────────────────────
@@ -195,6 +196,7 @@ class Measure:
     format_string: str | None = None
     description: str | None = None
     is_hidden: bool = False
+    annotations: dict[str, str] = field(default_factory=dict)
 
 
 # ── Relationships ──────────────────────────────────────────────────────────
@@ -240,6 +242,7 @@ class Table:
     description: str | None = None
     is_hidden: bool = False
     data_category: str | None = None
+    annotations: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_parquet(
@@ -321,6 +324,7 @@ class SemanticModel:
     description: str = ""
     compatibility_level: int = 1567
     culture: str = "en-US"
+    annotations: dict[str, str] = field(default_factory=dict)
     logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # ── Validation ──────────────────────────────────────────────────────────
@@ -478,6 +482,18 @@ class SemanticModel:
         import json
 
         order_json = json.dumps(order)
+        # User annotations override the auto-generated ones if keys collide;
+        # otherwise both sets render. PBI_QueryOrder is auto-emitted because
+        # callers shouldn't have to re-derive the parameter+source+table
+        # ordering by hand.
+        auto_annotations = {
+            "PBI_QueryOrder": order_json,
+            "__PBI_TimeIntelligenceEnabled": "0",
+        }
+        merged_annotations = {**auto_annotations, **self.annotations}
+        annotation_block = "\n\n".join(
+            f"\tannotation {k} = {v}" for k, v in merged_annotations.items()
+        )
         return (
             "model Model\n"
             f"\tculture: {self.culture}\n"
@@ -487,9 +503,7 @@ class SemanticModel:
             "\t\tlegacyRedirects\n"
             "\t\treturnErrorValuesAsNull\n"
             "\n"
-            f"\tannotation PBI_QueryOrder = {order_json}\n"
-            "\n"
-            "\tannotation __PBI_TimeIntelligenceEnabled = 0"
+            f"{annotation_block}"
         )
 
     def _emit_expressions(self) -> str:
@@ -588,7 +602,10 @@ def _emit_table(t: Table) -> str:
 
     parts.append(_emit_partition(t))
     parts.append("")
-    parts.append("\tannotation PBI_ResultType = Table")
+    # Auto-emitted PBI_ResultType plus any user-supplied annotations.
+    # User annotations override the auto one when keys collide.
+    table_annotations = {"PBI_ResultType": "Table", **t.annotations}
+    parts.extend(f"\tannotation {k} = {v}" for k, v in table_annotations.items())
     return "\n".join(parts)
 
 
@@ -609,6 +626,8 @@ def _emit_measure(t: Table, m: Measure) -> str:
     lines.append(f"\t\tlineageTag: {_lineage(t.name, 'measure', m.name)}")
     if m.is_hidden:
         lines.append("\t\tisHidden")
+    for k, v in m.annotations.items():
+        lines.append(f"\t\tannotation {k} = {v}")
     return "\n".join(lines)
 
 
@@ -630,7 +649,10 @@ def _emit_column(t: Table, c: Column) -> str:
         lines.append("\t\tisKey")
     if c.is_hidden:
         lines.append("\t\tisHidden")
-    lines.append("\t\tannotation SummarizationSetBy = Automatic")
+    # Auto-emit SummarizationSetBy = Automatic unless caller overrides it.
+    column_annotations = {"SummarizationSetBy": "Automatic", **c.annotations}
+    for k, v in column_annotations.items():
+        lines.append(f"\t\tannotation {k} = {v}")
     return "\n".join(lines)
 
 

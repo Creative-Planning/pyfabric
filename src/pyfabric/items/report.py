@@ -1,11 +1,16 @@
 """Build Fabric Report items (PBIR-Legacy format) by hand.
 
-MVP scope: a Page-and-Visual builder for KPI strips, slicers, and
-detail tables linked to a SemanticModel via a relative byPath
-reference. Out of scope: tooltip pages (the wiring schema needs to be
-re-derived from working examples), custom themes, hierarchy slicers,
-bookmarks, drillthrough, page-level filters beyond a slicer's
-allow-list.
+A Page-and-Visual builder for KPI strips, slicers, and detail tables
+linked to a SemanticModel via a relative byPath reference. Supports
+single-metric and multi-metric cards (with label typography + theme
+color styling), single-column and hierarchy slicers (with optional
+allow-list filter), tables with mixed Column/Measure/Aggregate fields
+and OrderBy on any of them, and an optional report-level theme bundled
+into ``StaticResources/SharedResources/BaseThemes/``.
+
+Out of scope: tooltip pages (the wiring schema needs to be re-derived
+from working examples), bookmarks, drillthrough, page-level filters
+beyond a slicer's allow-list.
 
 Output format is **PBIR-Legacy** (single ``report.json``) — the format
 Fabric currently emits when a report is created via ``+ New item →
@@ -95,6 +100,10 @@ DisplayUnits = Literal["Auto", "None", "Thousands", "Millions", "Billions", "Tri
 SortDirection = Literal["asc", "desc"]
 AggregationFunction = Literal["sum", "avg", "min", "max", "count", "distinctCount"]
 CardArrangement = Literal["rows", "columns"]
+LabelPosition = Literal["belowValue", "aboveValue"]
+# Power BI typography roles. Theme-driven font size + weight; preferable
+# to setting fontSize directly because the role adapts on theme swap.
+LabelHeading = Literal["Heading1", "Heading2", "Heading3", "Body"]
 
 
 # ``valueDisplayUnits`` literal magnitudes used by Power BI cards.
@@ -127,6 +136,40 @@ _SORT_DIR_INDEX: dict[SortDirection, int] = {
 
 # Stable UUID namespace for deterministic visual / page / pod ids.
 _REPORT_NS = uuid.UUID("c1d2e3f4-0001-4000-8000-000000000000")
+
+
+# ── Theme types ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ThemeColor:
+    """A reference to a color in the report's theme palette.
+
+    Use in place of hex literals so cards and other visuals adapt when
+    the theme is swapped. ``color_id`` indexes the theme's
+    ``dataColors`` list (0-based; theme conventions vary). ``percent``
+    tints the color (0.0 = full saturation, 0.6 = soft tint suitable
+    for backgrounds).
+    """
+
+    color_id: int
+    percent: float = 0.0
+
+
+@dataclass(frozen=True)
+class Theme:
+    """A Power BI base theme bundled with the report.
+
+    The ``content`` dict is emitted verbatim as the theme JSON file at
+    ``StaticResources/SharedResources/BaseThemes/<name>.json`` — pyfabric
+    doesn't validate or rewrite it. At minimum, Power BI expects keys
+    like ``name``, ``dataColors`` (a list of hex strings), and
+    ``background`` / ``foreground``; for everything else, see Microsoft's
+    Power BI report-theme JSON schema.
+    """
+
+    name: str
+    content: dict[str, Any]
 
 
 # ── Field references ───────────────────────────────────────────────────────
@@ -204,15 +247,36 @@ class Visual:
 class Slicer(Visual):
     """A slicer visual.
 
-    ``mode`` defaults to ``"Dropdown"``. ``allow_values``, when set,
-    emits a hardcoded slicer-level filter that limits the dropdown to
-    those values — useful for scoping the report (e.g. status slicer
-    showing only ``["INCOMPLETE", "NOT_DETECTED"]``).
+    ``field`` accepts either a single :class:`Column` (the common case)
+    or a list of columns to render a **hierarchy slicer** with one
+    drill level per entry. Hierarchy slicers must use ``mode="Basic"``;
+    other modes are silently coerced. All hierarchy levels start
+    collapsed (no preselected expansion); customize in Desktop if you
+    need a specific drill path on first load.
+
+    ``allow_values`` emits a hardcoded slicer-level filter that limits
+    the dropdown to those values — useful for scoping the report
+    (e.g. a status slicer showing only ``["INCOMPLETE", "NOT_DETECTED"]``).
+    The filter targets the **leaf** column when ``field`` is a hierarchy.
     """
 
-    field: Column = field(default_factory=lambda: Column("", ""))
+    field: Column | list[Column] = field(default_factory=lambda: Column("", ""))
     mode: SlicerMode = "Dropdown"
     allow_values: list[str] | None = None
+
+    @property
+    def field_levels(self) -> list[Column]:
+        """Always-a-list view of ``field``; single column → one-element list."""
+        return self.field if isinstance(self.field, list) else [self.field]
+
+    @property
+    def is_hierarchy(self) -> bool:
+        return isinstance(self.field, list) and len(self.field) > 1
+
+    @property
+    def leaf_field(self) -> Column:
+        """The deepest column in the hierarchy (or the only column)."""
+        return self.field_levels[-1]
 
 
 @dataclass
@@ -237,6 +301,14 @@ class MultiCard(Visual):
     whether tiles flow in rows or columns. The polish flags
     (``show_outline``, ``show_accent_bar``, ``show_shadow``) wire the
     matching ``objects`` properties.
+
+    The label-styling props target the small text under each value:
+
+    - ``label_heading`` — Power BI typography role (``"Heading2"`` etc.).
+      Theme-driven font size + weight; preferable to setting a literal
+      font size because the role adapts on theme swap.
+    - ``label_position`` — ``"belowValue"`` (default) or ``"aboveValue"``.
+    - ``label_font_color`` — :class:`ThemeColor` reference for label text.
     """
 
     measures: list[Measure] = field(default_factory=list)
@@ -245,6 +317,9 @@ class MultiCard(Visual):
     show_outline: bool = True
     show_accent_bar: bool = True
     show_shadow: bool = False
+    label_heading: LabelHeading | None = None
+    label_position: LabelPosition | None = None
+    label_font_color: ThemeColor | None = None
 
 
 @dataclass
@@ -293,12 +368,18 @@ class Report:
     ``semantic_model_path`` is a relative path from the report folder
     to a sibling ``*.SemanticModel`` folder (e.g. ``"../sm_x.SemanticModel"``).
     Emitted as a PBIR-Legacy ``definition.pbir`` ``byPath`` reference.
+
+    ``theme``, when set, bundles a base theme JSON file at
+    ``StaticResources/SharedResources/BaseThemes/<theme.name>.json``
+    and registers it as the report's base theme. Without a theme,
+    Power BI applies its workspace default.
     """
 
     name: str
     semantic_model_path: str
     pages: list[Page]
     description: str = ""
+    theme: Theme | None = None
     logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def save_to_disk(self, output_dir: Path | str) -> Path:
@@ -323,6 +404,15 @@ class Report:
         write_artifact_file(item_dir / ".platform", self._emit_platform())
         write_artifact_file(item_dir / "definition.pbir", self._emit_pbir())
         write_artifact_file(item_dir / "report.json", self._emit_report_json())
+        if self.theme is not None:
+            theme_path = (
+                item_dir
+                / "StaticResources"
+                / "SharedResources"
+                / "BaseThemes"
+                / f"{self.theme.name}.json"
+            )
+            write_artifact_file(theme_path, json.dumps(self.theme.content, indent=2))
 
         log.info(
             "report.save_to_disk complete",
@@ -360,7 +450,7 @@ class Report:
         )
 
     def _emit_report_json(self) -> str:
-        report_config = {
+        report_config: dict[str, Any] = {
             "version": "5.72",
             "activeSectionIndex": 0,
             "defaultDrillFilterOtherVisuals": True,
@@ -386,12 +476,41 @@ class Report:
                 ]
             },
         }
-        payload = {
+        if self.theme is not None:
+            report_config["themeCollection"] = {
+                "baseTheme": {
+                    "name": self.theme.name,
+                    "type": 2,
+                    "version": {
+                        "visual": "2.8.0",
+                        "report": "3.2.0",
+                        "page": "2.3.1",
+                    },
+                }
+            }
+        payload: dict[str, Any] = {
             "config": json.dumps(report_config),
             "layoutOptimization": 0,
             "pods": [_emit_pod(p, i) for i, p in enumerate(self.pages)],
             "sections": [_emit_section(p) for p in self.pages],
         }
+        if self.theme is not None:
+            payload["resourcePackages"] = [
+                {
+                    "resourcePackage": {
+                        "disabled": False,
+                        "items": [
+                            {
+                                "name": self.theme.name,
+                                "path": f"BaseThemes/{self.theme.name}.json",
+                                "type": 202,
+                            }
+                        ],
+                        "name": "SharedResources",
+                        "type": 2,
+                    }
+                }
+            ]
         return json.dumps(payload, indent=2)
 
 
@@ -401,6 +520,22 @@ class Report:
 def _id20(*parts: str) -> str:
     """Deterministic 20-char hex id matching Fabric's visual/page id shape."""
     return uuid.uuid5(_REPORT_NS, ".".join(parts)).hex[:20]
+
+
+def _theme_color_solid(c: ThemeColor) -> dict[str, Any]:
+    """The ``{solid: {color: {expr: {ThemeDataColor: ...}}}}`` wrapper Power BI uses for theme color refs."""
+    return {
+        "solid": {
+            "color": {
+                "expr": {
+                    "ThemeDataColor": {
+                        "ColorId": c.color_id,
+                        "Percent": c.percent,
+                    }
+                }
+            }
+        }
+    }
 
 
 # ── Internal: section / pod emitters ───────────────────────────────────────
@@ -477,11 +612,23 @@ def _layout_block(v: Visual) -> list[dict[str, Any]]:
 
 
 def _emit_slicer_config(s: Slicer) -> dict[str, Any]:
-    src = s.field.entity[0] or "d"
-    full_name = f"{s.field.entity}.{s.field.name}"
+    levels = s.field_levels
+    leaf = s.leaf_field
+    # All slicer levels must come from the same entity (Power BI doesn't
+    # render cross-entity hierarchies in a single slicer). Validate up
+    # front rather than emit silently broken JSON.
+    entities = {c.entity for c in levels}
+    if len(entities) > 1:
+        raise ValueError(
+            f"Slicer hierarchy levels must share an entity; got {sorted(entities)}"
+        )
+    src = leaf.entity[0] or "d"
+    # Hierarchy slicers only render correctly in Basic mode.
+    mode: SlicerMode = "Basic" if s.is_hierarchy else s.mode
+
     objects: dict[str, Any] = {
         "data": [
-            {"properties": {"mode": {"expr": {"Literal": {"Value": f"'{s.mode}'"}}}}}
+            {"properties": {"mode": {"expr": {"Literal": {"Value": f"'{mode}'"}}}}}
         ]
     }
     if s.allow_values:
@@ -491,9 +638,7 @@ def _emit_slicer_config(s: Slicer) -> dict[str, Any]:
                     "filter": {
                         "filter": {
                             "Version": 2,
-                            "From": [
-                                {"Name": src, "Entity": s.field.entity, "Type": 0}
-                            ],
+                            "From": [{"Name": src, "Entity": leaf.entity, "Type": 0}],
                             "Where": [
                                 {
                                     "Condition": {
@@ -504,7 +649,7 @@ def _emit_slicer_config(s: Slicer) -> dict[str, Any]:
                                                         "Expression": {
                                                             "SourceRef": {"Source": src}
                                                         },
-                                                        "Property": s.field.name,
+                                                        "Property": leaf.name,
                                                     }
                                                 }
                                             ],
@@ -522,21 +667,42 @@ def _emit_slicer_config(s: Slicer) -> dict[str, Any]:
             }
         ]
 
-    return {
+    inner: dict[str, Any] = {
         "name": s.name,
         "layouts": _layout_block(s),
         "singleVisual": {
             "visualType": "slicer",
-            "projections": {"Values": [{"queryRef": full_name, "active": True}]},
+            "projections": {
+                "Values": [
+                    {"queryRef": f"{c.entity}.{c.name}", "active": True} for c in levels
+                ]
+            },
             "prototypeQuery": {
                 "Version": 2,
-                "From": [{"Name": src, "Entity": s.field.entity, "Type": 0}],
-                "Select": [_select_column(s.field, src)],
+                "From": [{"Name": src, "Entity": leaf.entity, "Type": 0}],
+                "Select": [_select_column(c, src) for c in levels],
             },
             "drillFilterOtherVisuals": True,
             "objects": objects,
         },
     }
+    if s.is_hierarchy:
+        # Default to all levels collapsed; users wanting a preselected
+        # expansion path should customize in Desktop after first save.
+        inner["singleVisual"]["expansionStates"] = [
+            {
+                "roles": ["Values"],
+                "levels": [
+                    {
+                        "queryRefs": [f"{c.entity}.{c.name}"],
+                        "isCollapsed": True,
+                    }
+                    for c in levels
+                ],
+                "root": {"identityValues": None, "children": []},
+            }
+        ]
+    return inner
 
 
 # ── Card (single-metric) emitter ───────────────────────────────────────────
@@ -711,6 +877,25 @@ def _emit_multicard_config(mc: MultiCard) -> dict[str, Any]:
                 "selector": {"id": "default"},
             }
         ]
+
+    # Label styling for the per-tile measure-name text. Only emit when
+    # the user set at least one knob; otherwise leave Power BI defaults.
+    if any(
+        v is not None
+        for v in (mc.label_heading, mc.label_position, mc.label_font_color)
+    ):
+        label_props: dict[str, Any] = {"show": {"expr": {"Literal": {"Value": "true"}}}}
+        if mc.label_heading is not None:
+            label_props["heading"] = {
+                "expr": {"Literal": {"Value": f"'{mc.label_heading}'"}}
+            }
+        if mc.label_position is not None:
+            label_props["position"] = {
+                "expr": {"Literal": {"Value": f"'{mc.label_position}'"}}
+            }
+        if mc.label_font_color is not None:
+            label_props["fontColor"] = _theme_color_solid(mc.label_font_color)
+        objects["label"] = [{"properties": label_props, "selector": {"id": "default"}}]
 
     return {
         "name": mc.name,
