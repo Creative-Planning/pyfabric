@@ -375,3 +375,113 @@ class TestTableFromParquet:
             "active": "boolean",
             "ts": "dateTime",
         }
+
+
+# ── User-supplied annotations ──────────────────────────────────────────────
+
+
+class TestAnnotations:
+    def test_table_annotation_emitted(
+        self, gold: LakehouseSource, tmp_path: Path
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    columns=[Column("a", "string")],
+                    annotations={"PBI_NavigationStepName": "Navigation"},
+                ),
+            ],
+        )
+        item = sm.save_to_disk(tmp_path)
+        text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
+        assert "annotation PBI_ResultType = Table" in text
+        assert "annotation PBI_NavigationStepName = Navigation" in text
+
+    def test_table_annotation_overrides_auto(
+        self, gold: LakehouseSource, tmp_path: Path
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    columns=[Column("a", "string")],
+                    annotations={"PBI_ResultType": "Calculated"},
+                ),
+            ],
+        )
+        item = sm.save_to_disk(tmp_path)
+        text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
+        # User override wins; the default Table value is replaced
+        assert "annotation PBI_ResultType = Calculated" in text
+        assert "annotation PBI_ResultType = Table" not in text
+
+    def test_column_annotation_overrides_auto(
+        self, gold: LakehouseSource, tmp_path: Path
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    columns=[
+                        Column(
+                            "a",
+                            "string",
+                            annotations={"SummarizationSetBy": "User"},
+                        ),
+                    ],
+                ),
+            ],
+        )
+        item = sm.save_to_disk(tmp_path)
+        text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
+        assert "annotation SummarizationSetBy = User" in text
+        assert "annotation SummarizationSetBy = Automatic" not in text
+
+    def test_measure_annotation_emitted(
+        self, gold: LakehouseSource, tmp_path: Path
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    columns=[Column("a", "string")],
+                    measures=[
+                        Measure(
+                            "M",
+                            "1",
+                            annotations={"PBI_FormatHint": '{"isGeneralNumber":true}'},
+                        ),
+                    ],
+                ),
+            ],
+        )
+        item = sm.save_to_disk(tmp_path)
+        text = (item / "definition" / "tables" / "t.tmdl").read_text("utf-8")
+        assert "annotation PBI_FormatHint" in text
+
+    def test_model_annotation_appended(
+        self, gold: LakehouseSource, tmp_path: Path
+    ) -> None:
+        sm = SemanticModel(
+            name="sm",
+            sources=[gold],
+            tables=[Table(name="t", source=gold, columns=[Column("a", "string")])],
+            annotations={"CustomAnnotationKey": "hello"},
+        )
+        item = sm.save_to_disk(tmp_path)
+        text = (item / "definition" / "model.tmdl").read_text("utf-8")
+        assert "annotation PBI_QueryOrder" in text
+        assert "annotation CustomAnnotationKey = hello" in text
