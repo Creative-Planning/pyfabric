@@ -268,7 +268,11 @@ class Table:
                 "Table.from_parquet requires pyarrow; install with `pip install pyfabric[data]`"
             ) from e
 
-        schema_obj = pq.read_schema(str(parquet_path))
+        # pq.read_schema is untyped in pyarrow's stubs on older versions
+        # (mypy's no-untyped-call fires on CI's 3.12/pyarrow combo but
+        # not on newer toolchains). Suppress both the untyped-call
+        # warning and the unused-ignore warning that newer mypy emits.
+        schema_obj = pq.read_schema(str(parquet_path))  # type: ignore[no-untyped-call, unused-ignore]
         columns = [
             Column(name=field.name, data_type=arrow_to_tmdl(str(field.type)))
             for field in schema_obj

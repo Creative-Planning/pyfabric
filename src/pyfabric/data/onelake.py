@@ -152,20 +152,39 @@ def walk(
         Dicts with at least ``name`` (DFS-native path), ``rel_path``
         (path relative to item_id), ``size`` (int bytes), plus any other
         fields returned by the DFS API.
+
+    Implementation note: iterates with ``recursive=False`` and descends
+    manually rather than passing ``recursive=True`` to :func:`list_paths`.
+    DFS's recursive flag on OneLake returns the filesystem root fully
+    recursively but goes shallow when the request path is a deep
+    subdirectory (observed: a request for
+    ``Files/.../2026/04 - April 2026`` returns only the 4 region
+    folders, never descending further, even though the same DFS call
+    with ``path="Files"`` returns 70k+ entries). Manual recursion
+    works uniformly at any depth.
     """
     prefix = f"{item_id}/"
-    for entry in list_paths(token, ws_id, item_id, path, recursive=True):
-        if entry.get("isDirectory", "false") == "true":
-            continue
-        name = entry.get("name", "")
-        if suffix and not name.endswith(suffix):
-            continue
-        rel_path = name[len(prefix) :] if name.startswith(prefix) else name
-        yield {
-            **entry,
-            "rel_path": rel_path,
-            "size": int(entry.get("contentLength", 0)),
-        }
+    stack: list[str] = [path]
+    while stack:
+        current = stack.pop()
+        for entry in list_paths(token, ws_id, item_id, current, recursive=False):
+            name = entry.get("name", "")
+            is_dir = entry.get("isDirectory", "false") == "true"
+            # Directory names from DFS come back prefixed with the
+            # lakehouse item_id; strip for the next request.
+            next_path = (
+                name[len(prefix) :] if name.startswith(prefix) else name.lstrip("/")
+            )
+            if is_dir:
+                stack.append(next_path)
+                continue
+            if suffix and not name.endswith(suffix):
+                continue
+            yield {
+                **entry,
+                "rel_path": next_path,
+                "size": int(entry.get("contentLength", 0)),
+            }
 
 
 # ── Hash utility ─────────────────────────────────────────────────────────────
