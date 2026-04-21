@@ -43,30 +43,69 @@ def _mock_session_with_pages(*pages: list[dict]) -> MagicMock:
 # ── walk() ──────────────────────────────────────────────────────────────────
 
 
+def _mock_session_per_directory(tree: dict[str, list[dict]]) -> MagicMock:
+    """Build a mock session that returns different entries per directory.
+
+    `tree` maps a request URL suffix (the directory path) to the list of
+    entries that should be returned when that directory is listed.
+    Missing entries (directories not in `tree`) yield an empty list.
+
+    Mirrors real DFS semantics: calling with a directory path returns
+    only its direct children. Manual-recursion in :func:`walk` drives
+    a sequence of calls, one per subdirectory.
+    """
+
+    def handle_get(url, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 200
+        # URL shape: {base}/{ws}/{item}/{path}. Extract the path tail.
+        suffix = url.rstrip("/").rsplit("/lh/", 1)[-1] if "/lh/" in url else url
+        # Normalize: suffix == "lh" when path == "" (root)
+        page = tree.get(suffix, [])
+        resp.json.return_value = {"paths": page}
+        resp.headers = {}
+        return resp
+
+    session = MagicMock()
+    session.get.side_effect = handle_get
+    return session
+
+
 class TestWalk:
     def test_yields_files_not_directories(self):
-        entries = [
-            {"name": "lh/Files/a.pdf", "contentLength": "100"},
-            {"name": "lh/Files/sub", "isDirectory": "true"},
-            {"name": "lh/Files/sub/b.pdf", "contentLength": "200"},
-        ]
+        # Real DFS semantics: list_paths("Files") returns direct children
+        # only. walk() descends manually into "Files/sub".
+        tree = {
+            "Files": [
+                {"name": "lh/Files/a.pdf", "contentLength": "100"},
+                {"name": "lh/Files/sub", "isDirectory": "true"},
+            ],
+            "Files/sub": [
+                {"name": "lh/Files/sub/b.pdf", "contentLength": "200"},
+            ],
+        }
         with patch(
             "pyfabric.data.onelake._get_session",
-            return_value=_mock_session_with_pages(entries),
+            return_value=_mock_session_per_directory(tree),
         ):
             results = list(walk("tok", "ws", "lh", "Files"))
-        assert [r["rel_path"] for r in results] == ["Files/a.pdf", "Files/sub/b.pdf"]
-        assert [r["size"] for r in results] == [100, 200]
+        assert sorted(r["rel_path"] for r in results) == [
+            "Files/a.pdf",
+            "Files/sub/b.pdf",
+        ]
+        assert sorted(r["size"] for r in results) == [100, 200]
 
     def test_suffix_filter(self):
-        entries = [
-            {"name": "lh/Files/a.pdf", "contentLength": "1"},
-            {"name": "lh/Files/b.txt", "contentLength": "2"},
-            {"name": "lh/Files/c.PDF", "contentLength": "3"},  # case-sensitive
-        ]
+        tree = {
+            "Files": [
+                {"name": "lh/Files/a.pdf", "contentLength": "1"},
+                {"name": "lh/Files/b.txt", "contentLength": "2"},
+                {"name": "lh/Files/c.PDF", "contentLength": "3"},  # case-sensitive
+            ],
+        }
         with patch(
             "pyfabric.data.onelake._get_session",
-            return_value=_mock_session_with_pages(entries),
+            return_value=_mock_session_per_directory(tree),
         ):
             results = list(walk("tok", "ws", "lh", "Files", suffix=".pdf"))
         assert [r["rel_path"] for r in results] == ["Files/a.pdf"]
@@ -74,7 +113,7 @@ class TestWalk:
     def test_empty_dir_yields_nothing(self):
         with patch(
             "pyfabric.data.onelake._get_session",
-            return_value=_mock_session_with_pages([]),
+            return_value=_mock_session_per_directory({"Files": []}),
         ):
             results = list(walk("tok", "ws", "lh", "Files"))
         assert results == []
@@ -91,13 +130,40 @@ class TestWalk:
         assert results == []
 
     def test_names_without_item_prefix_pass_through(self):
-        entries = [{"name": "Files/a.pdf", "contentLength": "1"}]
+        tree = {"Files": [{"name": "Files/a.pdf", "contentLength": "1"}]}
         with patch(
             "pyfabric.data.onelake._get_session",
-            return_value=_mock_session_with_pages(entries),
+            return_value=_mock_session_per_directory(tree),
         ):
             results = list(walk("tok", "ws", "lh", "Files"))
         assert results[0]["rel_path"] == "Files/a.pdf"
+
+    def test_deep_tree_recurses_all_the_way_down(self):
+        """Regression test for OneLake DFS quirk (2026-04-21): calling
+        list_paths with recursive=true on a deep subdirectory returns
+        only its direct children — not the full subtree. walk() must
+        descend manually so any depth traversal returns all files.
+        """
+        tree = {
+            "root": [
+                {"name": "lh/root/year", "isDirectory": "true"},
+            ],
+            "root/year": [
+                {"name": "lh/root/year/month", "isDirectory": "true"},
+            ],
+            "root/year/month": [
+                {"name": "lh/root/year/month/region", "isDirectory": "true"},
+            ],
+            "root/year/month/region": [
+                {"name": "lh/root/year/month/region/a.pdf", "contentLength": "10"},
+            ],
+        }
+        with patch(
+            "pyfabric.data.onelake._get_session",
+            return_value=_mock_session_per_directory(tree),
+        ):
+            results = list(walk("tok", "ws", "lh", "root"))
+        assert [r["rel_path"] for r in results] == ["root/year/month/region/a.pdf"]
 
 
 # ── list_paths passes continuation tokens through ───────────────────────────
