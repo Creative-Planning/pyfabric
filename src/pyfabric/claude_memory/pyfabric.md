@@ -51,6 +51,17 @@ for the current shell is the tenant pyfabric talks to. Pass `tenant=` to
   `testing` extra.
 - Lakehouse GUIDs are easiest to grab from the Fabric UI (Settings →
   Identifier). Workspace GUIDs come from listing workspaces via pyfabric.
+- **Pin the `logical_id=` on every `SemanticModel(...)` / `Report(...)` you
+  regenerate from a build script.** The builders mint a fresh logicalId
+  via `<factory>` on each run; Fabric git-sync keys deployed items by
+  `.platform/logicalId`, so a rebuild lands as a **new** artifact that
+  collides with the already-deployed one (same displayName, different
+  logicalId). The sync fails, listing both the deployed item (real
+  ObjectId) and the new one (ObjectId `00000000-…`). Fix: declare
+  module-level UUID constants once, pass them via `logical_id=` on every
+  rebuild, and never let a `<factory>`-generated logicalId reach main.
+  If one slips through, restore from the first successful deploy with
+  `git show <sha>:path/to/.platform`.
 
 **Common operations:**
 
