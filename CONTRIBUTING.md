@@ -80,6 +80,37 @@ All PRs require:
 All PRs are squash merged, so GitHub signs the resulting commit on `main`
 automatically. Local commit signing is not required.
 
+### Tracking work (Claude sessions + human)
+
+Cross-session tracking lives on the [Issues tab](https://github.com/Creative-Planning/pyfabric/issues)
+— a single source of truth visible to every Claude session and human
+contributor. Before proposing new work:
+
+1. Run `gh issue list` (or browse the Issues tab) and check if it's
+   already tracked. If yes, comment on that issue with new context or
+   open a PR that references it (`Fixes #N` / `Refs #N`).
+2. For **new library features or bug fixes**, file an
+   [Issue](https://github.com/Creative-Planning/pyfabric/issues/new)
+   labeled `enhancement` (feature) or `bug` (defect). Describe the
+   problem, proposed API, scope estimate, and any real-world incident
+   that motivates the work.
+3. For **new `src/pyfabric/claude_memory/*.md` docs** (guidance that
+   ships with the wheel and lands in consumer projects via
+   `pyfabric install-claude-memory`), file an Issue labeled
+   `documentation`. The issue describes the guidance; the PR adds
+   the file plus the one-line pointer in
+   `src/pyfabric/claude_memory/MEMORY.md`. Bump the beta version
+   so consumers pick it up on their next install.
+4. For **AI-detected cross-session patterns** (something you notice in
+   one consumer project that other consumer projects probably hit too),
+   file an Issue — do not stash it in a local TODO file or client-
+   specific memory. Future sessions need to be able to find it via
+   `gh issue list`.
+
+Do not create parallel tracking files in the repo (`TODO.md`,
+`ROADMAP.md`, etc.) — issues are authoritative. If you find an old
+one, migrate its contents into issues and delete the file.
+
 ### Releasing
 
 1. Merge all changes to `main`.
