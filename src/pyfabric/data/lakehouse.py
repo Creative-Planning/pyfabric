@@ -81,7 +81,10 @@ def write_table(
         import pyarrow as pa_mod
         from deltalake import CommitProperties, write_deltalake
     except ImportError:
-        raise RuntimeError("pip install deltalake pyarrow") from None
+        raise RuntimeError(
+            "write_table needs deltalake + pyarrow. Install them with "
+            "`pip install pyfabric[lakehouse-io]` (or the `all` extra)."
+        ) from None
 
     # pandas is only required when the caller passes a DataFrame — keep the
     # import lazy so Arrow-only callers don't need pandas installed.
