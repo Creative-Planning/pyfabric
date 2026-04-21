@@ -278,6 +278,7 @@ class LocalLakehouse:
         table_name: str,
         *,
         mode: str = "overwrite",
+        skip_empty: bool = False,
     ) -> int:
         """Push a single DuckDB table to OneLake as a Delta table.
 
@@ -287,6 +288,13 @@ class LocalLakehouse:
             credential: FabricCredential for storage token.
             table_name: Table name (without schema prefix).
             mode:       "overwrite" or "append".
+            skip_empty: If True, skip the write when the table has 0 rows
+                and return 0. Defaults to False because DirectLake
+                semantic models bind to ``abfss://.../Tables/<schema>/<table>``
+                and fail refresh with "source tables either do not exist
+                or access was denied" when the delta log is missing —
+                zero-row deltas are valid and DirectLake-compatible, so
+                writing them is the safer default.
 
         Returns:
             Number of rows written.
@@ -297,7 +305,7 @@ class LocalLakehouse:
         reader = self._conn.execute(f"SELECT * FROM {self.schema}.{table_name}").arrow()
         arrow_table = reader.read_all() if hasattr(reader, "read_all") else reader
 
-        if arrow_table.num_rows == 0:
+        if arrow_table.num_rows == 0 and skip_empty:
             log.info("Skipping empty table: %s", table_name)
             return 0
 
@@ -319,37 +327,52 @@ class LocalLakehouse:
         *,
         mode: str = "overwrite",
         tables: list[str] | None = None,
+        skip_empty: bool = False,
     ) -> dict[str, int]:
-        """Push all non-empty tables (or a subset) to OneLake.
+        """Push tables to OneLake, including zero-row ones by default.
 
         Args:
             credential: FabricCredential for storage token.
             mode:       "overwrite" or "append".
-            tables:     Optional list of table names to push. If None, pushes all.
+            tables:     Optional list of table names to push. If None,
+                        pushes all tables in the local schema.
+            skip_empty: If True, skip tables with 0 rows. Defaults to
+                        False because DirectLake semantic models bind to
+                        ``abfss://.../Tables/<schema>/<table>`` and fail
+                        refresh with "source tables either do not exist
+                        or access was denied" when the delta log is
+                        missing — writing zero-row deltas keeps the log
+                        valid and DirectLake-compatible.
 
         Returns:
-            Dict of {table_name: rows_written} for tables that were pushed.
+            Dict of {table_name: rows_written}. Skipped-empty tables
+            are absent; failed pushes map to -1.
         """
         target_tables = tables or self.table_names()
         results = {}
 
         for name in target_tables:
             count = self.row_count(name)
-            if count == 0:
+            if count == 0 and skip_empty:
                 continue
             log.info("Pushing %s (%d rows)", name, count)
             try:
-                written = self.push_table(credential, name, mode=mode)
+                written = self.push_table(
+                    credential,
+                    name,
+                    mode=mode,
+                    skip_empty=skip_empty,
+                )
                 results[name] = written
             except Exception as e:
                 log.error("Failed to push %s: %s", name, e)
                 results[name] = -1  # signal failure
 
-        total = sum(v for v in results.values() if v > 0)
+        total = sum(v for v in results.values() if v >= 0)
         log.info(
             "Push complete: %d rows across %d tables",
             total,
-            sum(1 for v in results.values() if v > 0),
+            sum(1 for v in results.values() if v >= 0),
         )
         return results
 

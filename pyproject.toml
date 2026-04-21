@@ -45,15 +45,24 @@ data = [
     "pyodbc>=5.1",
     "azure-storage-file-datalake>=12.17",
 ]
-testing = [
-    "duckdb>=1.1",
+# Runtime deps for pyfabric.data.lakehouse.write_table (Delta write path
+# to OneLake). These are genuine runtime requirements of the write_table
+# function, not testing-only — install them when you need to write Delta
+# tables from a host that doesn't already have them. The `testing` extra
+# includes this via pyfabric[lakehouse-io] for backwards compat.
+lakehouse-io = [
     "deltalake>=0.21",
     "pyarrow>=17",
+]
+testing = [
+    "pyfabric[lakehouse-io]",
+    "duckdb>=1.1",
     "pytest>=8.0",
 ]
 all = [
     "pyfabric[azure]",
     "pyfabric[data]",
+    "pyfabric[lakehouse-io]",
     "pyfabric[testing]",
 ]
 dev = [
