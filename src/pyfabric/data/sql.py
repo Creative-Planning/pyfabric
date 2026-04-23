@@ -110,7 +110,11 @@ class FabricSql:
         log.debug("SQL query: %s", sql[:200])
         conn = self._get_connection()
         try:
-            df = pd_mod.read_sql(sql, conn, params=params)
+            cursor = conn.cursor()
+            cursor.execute(sql, params or ())
+            cols = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            df = pd_mod.DataFrame.from_records(rows, columns=cols)
             log.debug("  -> %d rows, %d columns", len(df), len(df.columns))
             return df
         except Exception as e:

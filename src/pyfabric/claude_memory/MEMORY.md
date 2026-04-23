@@ -1,2 +1,4 @@
 - [pyfabric reference](pyfabric.md) — how to use pyfabric (auth, workspaces, lakehouse access) from Python in any repo
 - [Descriptions are required by default](descriptions_required.md) — SemanticModel + Report builders raise on save for missing descriptions on visible objects. Always supply meaningful ones; use `is_hidden=True` for housekeeping; do not reach for `strict_descriptions=False`.
+- [OneLake direct vs SQL analytics endpoint](onelake_vs_sql_endpoint.md) — prefer OneLake for discovery/scans; FabricSql only for joins or endpoint validation. MirroredDatabase SQL endpoint lags during refresh.
+- [Wheel + SqlConn transform pattern](wheel_sqlconn_pattern.md) — canonical pattern for Fabric Spark notebooks: transforms in a pip wheel, DuckDB for local tests, SparkSqlConn in Fabric. Closes the loop with LocalLakehouse.push_table().
