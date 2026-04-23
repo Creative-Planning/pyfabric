@@ -137,17 +137,22 @@ class TestQueryDfCursorPath:
         sql._conn = mock_conn
         return sql
 
-    def test_returns_dataframe_with_correct_columns_and_rows(self):
+    def _mock_pd(self) -> MagicMock:
+        mock_pd = MagicMock()
+        mock_pd.DataFrame.from_records.return_value = MagicMock()
+        return mock_pd
 
+    def test_from_records_called_with_correct_rows_and_columns(self):
+        mock_pd = self._mock_pd()
         sql = self._make_sql()
-        df = sql.query_df("SELECT id, name FROM dbo.t")
-        assert list(df.columns) == ["id", "name"]
-        assert len(df) == 2
-        assert df["name"].tolist() == ["alpha", "beta"]
+        with patch.dict("sys.modules", {"pandas": mock_pd}):
+            sql.query_df("SELECT id, name FROM dbo.t")
+        mock_pd.DataFrame.from_records.assert_called_with(
+            [(1, "alpha"), (2, "beta")], columns=["id", "name"]
+        )
 
     def test_does_not_call_read_sql(self):
-        mock_pd = MagicMock()
-        mock_pd.DataFrame.from_records.return_value = mock_pd.DataFrame.from_records()
+        mock_pd = self._mock_pd()
         sql = self._make_sql()
         with patch.dict("sys.modules", {"pandas": mock_pd}):
             sql.query_df("SELECT 1")
@@ -157,7 +162,8 @@ class TestQueryDfCursorPath:
         sql = self._make_sql()
         cursor = sql._conn.cursor.return_value
 
-        sql.query_df("SELECT * FROM t WHERE id = ?", params=[42])
+        with patch.dict("sys.modules", {"pandas": self._mock_pd()}):
+            sql.query_df("SELECT * FROM t WHERE id = ?", params=[42])
         # _get_connection calls execute("SELECT 1") first; check the query call.
         cursor.execute.assert_called_with("SELECT * FROM t WHERE id = ?", [42])
 
@@ -165,7 +171,8 @@ class TestQueryDfCursorPath:
         sql = self._make_sql()
         cursor = sql._conn.cursor.return_value
 
-        sql.query_df("SELECT 1")
+        with patch.dict("sys.modules", {"pandas": self._mock_pd()}):
+            sql.query_df("SELECT 1")
         # _get_connection calls execute("SELECT 1") first; check the query call.
         cursor.execute.assert_called_with("SELECT 1", ())
 
