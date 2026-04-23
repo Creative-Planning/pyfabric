@@ -44,6 +44,7 @@ azure = [
 data = [
     "pyodbc>=5.1",
     "azure-storage-file-datalake>=12.17",
+    "pandas>=2.0",
 ]
 # Runtime deps for pyfabric.data.lakehouse.write_table (Delta write path
 # to OneLake). These are genuine runtime requirements of the write_table

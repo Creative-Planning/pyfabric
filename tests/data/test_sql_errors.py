@@ -66,10 +66,14 @@ class TestQueryErrors:
         cred = MagicMock()
         sql = FabricSql("server", "db", cred)
         mock_conn = MagicMock()
+        # First execute is the SELECT 1 health check (succeeds); second is the query.
+        mock_conn.cursor.return_value.execute.side_effect = [
+            None,
+            Exception("Invalid column name 'nonexistent'"),
+        ]
         sql._conn = mock_conn
 
         mock_pd = MagicMock()
-        mock_pd.read_sql.side_effect = Exception("Invalid column name 'nonexistent'")
         with patch.dict("sys.modules", {"pandas": mock_pd}):
             with pytest.raises(SqlError, match="SQL query failed") as exc_info:
                 sql.query_df("SELECT nonexistent FROM dbo.products")
@@ -106,13 +110,61 @@ class TestQueryErrors:
         cred = MagicMock()
         sql = FabricSql("server", "db", cred)
         mock_conn = MagicMock()
+        # First execute is the SELECT 1 health check; second is the INFORMATION_SCHEMA query.
+        mock_conn.cursor.return_value.execute.side_effect = [
+            None,
+            Exception("connection lost"),
+        ]
         sql._conn = mock_conn
 
         mock_pd = MagicMock()
-        mock_pd.read_sql.side_effect = Exception("connection lost")
         with patch.dict("sys.modules", {"pandas": mock_pd}):
             result = sql.table_exists("nonexistent_table")
             assert result is False
+
+
+class TestQueryDfCursorPath:
+    """query_df uses cursor.execute + DataFrame.from_records — no pd.read_sql."""
+
+    def _make_sql(self) -> FabricSql:
+        cred = MagicMock()
+        sql = FabricSql("server", "db", cred)
+        cursor = MagicMock()
+        cursor.description = [("id",), ("name",)]
+        cursor.fetchall.return_value = [(1, "alpha"), (2, "beta")]
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = cursor
+        sql._conn = mock_conn
+        return sql
+
+    def test_returns_dataframe_with_correct_columns_and_rows(self):
+        sql = self._make_sql()
+        df = sql.query_df("SELECT id, name FROM dbo.t")
+        assert list(df.columns) == ["id", "name"]
+        assert len(df) == 2
+        assert df["name"].tolist() == ["alpha", "beta"]
+
+    def test_does_not_call_read_sql(self):
+        mock_pd = MagicMock()
+        mock_pd.DataFrame.from_records.return_value = MagicMock()
+        sql = self._make_sql()
+        with patch.dict("sys.modules", {"pandas": mock_pd}):
+            sql.query_df("SELECT 1")
+        mock_pd.read_sql.assert_not_called()
+
+    def test_params_forwarded_to_cursor_execute(self):
+        sql = self._make_sql()
+        cursor = sql._conn.cursor.return_value
+        sql.query_df("SELECT * FROM t WHERE id = ?", params=[42])
+        # _get_connection calls execute("SELECT 1") first; check the query call.
+        cursor.execute.assert_called_with("SELECT * FROM t WHERE id = ?", [42])
+
+    def test_empty_params_uses_empty_tuple(self):
+        sql = self._make_sql()
+        cursor = sql._conn.cursor.return_value
+        sql.query_df("SELECT 1")
+        # _get_connection calls execute("SELECT 1") first; check the query call.
+        cursor.execute.assert_called_with("SELECT 1", ())
 
 
 class TestConnectLakehouseErrors:
