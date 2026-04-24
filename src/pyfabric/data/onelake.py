@@ -424,6 +424,50 @@ def delete_file(token: str, ws_id: str, item_id: str, path: str) -> bool:
     return r.status_code in (200, 202)
 
 
+def delete_path(
+    token: str,
+    ws_id: str,
+    item_id: str,
+    path: str,
+    *,
+    recursive: bool = False,
+) -> bool:
+    """Delete a file or directory at ``{item_id}/{path}``.
+
+    Returns True if deleted, False if the path did not exist (404).
+
+    Use ``recursive=True`` to delete a directory and all of its contents
+    (required by the ADLS Gen2 DFS API for non-empty directories).
+    """
+    url = _dfs_url(ws_id, item_id, path)
+    params = {"recursive": "true"} if recursive else None
+    r = _get_session().delete(url, headers=_hdrs(token), params=params)
+    if r.status_code == 404:
+        return False
+    r.raise_for_status()
+    return True
+
+
+def rename_path(
+    token: str,
+    ws_id: str,
+    item_id: str,
+    src_path: str,
+    dst_path: str,
+) -> None:
+    """Rename a file or directory at ``{item_id}/{src_path}`` to ``dst_path``.
+
+    Metadata-only move — no data rewrite. The destination is addressed by
+    PUT on its URL with the ``x-ms-rename-source`` header pointing at the
+    source, per the ADLS Gen2 DFS protocol.
+    """
+    url = _dfs_url(ws_id, item_id, dst_path)
+    rename_source = f"/{ws_id}/{item_id}/{src_path}"
+    headers = {**_hdrs(token), "x-ms-rename-source": rename_source}
+    r = _get_session().put(url, headers=headers)
+    r.raise_for_status()
+
+
 def upload_parquet(
     token: str,
     ws_id: str,

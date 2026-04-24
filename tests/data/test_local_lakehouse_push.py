@@ -94,3 +94,55 @@ class TestPushAllEmptyDefault:
             results = lh.push_all(fake_credential, tables=["empty_tbl"])
         assert set(results.keys()) == {"empty_tbl"}
         assert mock_write.call_count == 1
+
+
+class TestPushTableTargetSchema:
+    def test_default_target_schema_matches_source(self, lh, fake_credential):
+        """Back-compat: without target_schema, push uses self.schema."""
+        with patch("pyfabric.data.lakehouse.write_table") as mock_write:
+            mock_write.return_value = MagicMock(row_count=2)
+            lh.push_table(fake_credential, "full_tbl")
+        assert mock_write.call_args.kwargs["schema"] == "dbo"
+
+    def test_target_schema_override_routes_write_to_target(self, lh, fake_credential):
+        """SELECT reads source schema; write_table gets the override."""
+        with patch("pyfabric.data.lakehouse.write_table") as mock_write:
+            mock_write.return_value = MagicMock(row_count=2)
+            lh.push_table(fake_credential, "full_tbl", target_schema="silver_dbo")
+        assert mock_write.call_args.kwargs["schema"] == "silver_dbo"
+        # Arrow payload came from the source schema, so row count matches.
+        arrow_arg = mock_write.call_args.args[4]
+        assert arrow_arg.num_rows == 2
+
+    def test_target_schema_empty_string_rejected(self, lh, fake_credential):
+        with (
+            patch("pyfabric.data.lakehouse.write_table") as mock_write,
+            pytest.raises(ValueError, match="target_schema"),
+        ):
+            lh.push_table(fake_credential, "full_tbl", target_schema="")
+        mock_write.assert_not_called()
+
+    def test_target_schema_whitespace_rejected(self, lh, fake_credential):
+        with (
+            patch("pyfabric.data.lakehouse.write_table") as mock_write,
+            pytest.raises(ValueError, match="target_schema"),
+        ):
+            lh.push_table(fake_credential, "full_tbl", target_schema="   ")
+        mock_write.assert_not_called()
+
+
+class TestPushAllTargetSchema:
+    def test_push_all_passes_target_schema_to_every_table(self, lh, fake_credential):
+        with patch("pyfabric.data.lakehouse.write_table") as mock_write:
+            mock_write.return_value = MagicMock(row_count=0)
+            lh.push_all(fake_credential, target_schema="gold_dbo")
+        assert mock_write.call_count == 2
+        for call in mock_write.call_args_list:
+            assert call.kwargs["schema"] == "gold_dbo"
+
+    def test_push_all_default_target_matches_source(self, lh, fake_credential):
+        with patch("pyfabric.data.lakehouse.write_table") as mock_write:
+            mock_write.return_value = MagicMock(row_count=0)
+            lh.push_all(fake_credential)
+        for call in mock_write.call_args_list:
+            assert call.kwargs["schema"] == "dbo"

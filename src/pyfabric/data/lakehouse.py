@@ -29,9 +29,33 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 from pyfabric.client.auth import FabricCredential
+from pyfabric.data import onelake
 from pyfabric.data.onelake import abfss_url
 
 log = structlog.get_logger()
+
+
+class LakehouseRenameSchemaError(Exception):
+    """Raised by :func:`rename_schema` when at least one table move failed.
+
+    Attempts every table in the source schema before raising — callers
+    can retry the listed ``failed`` tables without re-moving the ones
+    already in ``moved``.
+
+    Attributes:
+        moved:  Table names successfully moved to the destination schema.
+        failed: Mapping of table name → error message for tables that
+                could not be moved. The source copies of these tables
+                remain in place.
+    """
+
+    def __init__(self, moved: list[str], failed: dict[str, str]):
+        self.moved = moved
+        self.failed = failed
+        super().__init__(
+            f"rename_schema partial failure — moved {len(moved)}, "
+            f"failed {len(failed)}: {sorted(failed)}"
+        )
 
 
 @dataclass
@@ -324,3 +348,202 @@ def _read_delta(
         "Delta file-level read: %d rows from %d files", len(result), len(file_uris)
     )
     return result
+
+
+# ── DDL helpers (schema/table management) ────────────────────────────────────
+
+
+def delete_table(
+    credential: FabricCredential,
+    ws_id: str,
+    lh_id: str,
+    table: str,
+    *,
+    schema: str = "dbo",
+) -> bool:
+    """Delete a Delta table from a Fabric lakehouse.
+
+    Removes the ``Tables/{schema}/{table}/`` directory and everything
+    under it (delta log + parquet files). Returns True when the
+    directory existed and was deleted, False when it was already
+    missing.
+    """
+    path = f"Tables/{schema}/{table}"
+    log.info("delete_table", schema=schema, table=table, path=path)
+    return onelake.delete_path(
+        credential.storage_token, ws_id, lh_id, path, recursive=True
+    )
+
+
+def rename_table(
+    credential: FabricCredential,
+    ws_id: str,
+    lh_id: str,
+    src: str,
+    dst: str,
+    *,
+    schema: str = "dbo",
+) -> None:
+    """Rename a Delta table within a schema.
+
+    Metadata-only move on ``Tables/{schema}/{src}/`` → ``Tables/{schema}/{dst}/``.
+    No data is rewritten.
+    """
+    if src == dst:
+        raise ValueError(
+            f"rename_table src and dst are identical ({src!r}); nothing to do"
+        )
+    src_path = f"Tables/{schema}/{src}"
+    dst_path = f"Tables/{schema}/{dst}"
+    log.info(
+        "rename_table",
+        schema=schema,
+        src=src,
+        dst=dst,
+        src_path=src_path,
+        dst_path=dst_path,
+    )
+    onelake.rename_path(credential.storage_token, ws_id, lh_id, src_path, dst_path)
+
+
+def rename_schema(
+    credential: FabricCredential,
+    ws_id: str,
+    lh_id: str,
+    src_schema: str,
+    dst_schema: str,
+) -> list[str]:
+    """Move every table in ``src_schema`` into ``dst_schema``.
+
+    Iterates all table directories under ``Tables/{src_schema}/`` and
+    renames each one to ``Tables/{dst_schema}/{table}/``. Continues
+    past individual failures — any table that couldn't be moved is
+    reported via :class:`LakehouseRenameSchemaError` after every other
+    table has been attempted, so callers can retry the failures without
+    re-moving the successes.
+
+    Returns the list of table names that moved successfully. Raises
+    :class:`LakehouseRenameSchemaError` if any move failed.
+    """
+    if src_schema == dst_schema:
+        raise ValueError(
+            f"rename_schema src and dst are identical ({src_schema!r}); nothing to do"
+        )
+
+    tables = list_tables(credential, ws_id, lh_id, schema=src_schema)
+    log.info(
+        "rename_schema_starting",
+        src_schema=src_schema,
+        dst_schema=dst_schema,
+        table_count=len(tables),
+    )
+
+    moved: list[str] = []
+    failed: dict[str, str] = {}
+    for t in tables:
+        try:
+            onelake.rename_path(
+                credential.storage_token,
+                ws_id,
+                lh_id,
+                f"Tables/{src_schema}/{t}",
+                f"Tables/{dst_schema}/{t}",
+            )
+            moved.append(t)
+        except Exception as e:
+            failed[t] = str(e)
+            log.error(
+                "rename_schema_table_failed",
+                src_schema=src_schema,
+                dst_schema=dst_schema,
+                table=t,
+                error=str(e),
+            )
+
+    if failed:
+        raise LakehouseRenameSchemaError(moved, failed)
+
+    log.info(
+        "rename_schema_complete",
+        src_schema=src_schema,
+        dst_schema=dst_schema,
+        moved_count=len(moved),
+    )
+    return moved
+
+
+def drop_schema(
+    credential: FabricCredential,
+    ws_id: str,
+    lh_id: str,
+    schema: str,
+) -> bool:
+    """Drop a schema from a schema-enabled lakehouse.
+
+    Removes the ``Tables/{schema}/`` directory and everything under it.
+    Returns True when the directory existed and was deleted, False when
+    it was already missing.
+
+    This deletes any tables still present under the schema — pair with
+    :func:`rename_schema` when you want to preserve the data.
+    """
+    path = f"Tables/{schema}"
+    log.info("drop_schema", schema=schema, path=path)
+    return onelake.delete_path(
+        credential.storage_token, ws_id, lh_id, path, recursive=True
+    )
+
+
+def list_schemas(
+    credential: FabricCredential,
+    ws_id: str,
+    lh_id: str,
+) -> list[str]:
+    """List schema names (directories directly under ``Tables/``)."""
+    entries = onelake.list_paths(
+        credential.storage_token, ws_id, lh_id, "Tables", recursive=False
+    )
+    return [
+        _basename(e["name"]) for e in entries if e.get("isDirectory", "false") == "true"
+    ]
+
+
+def list_tables(
+    credential: FabricCredential,
+    ws_id: str,
+    lh_id: str,
+    *,
+    schema: str | None = None,
+) -> list[str]:
+    """List table names in a lakehouse.
+
+    With ``schema``, returns unqualified table names in that schema
+    (e.g. ``["widgets", "gizmos"]``). Without, returns qualified names
+    across every schema (e.g. ``["dbo.widgets", "silver.foo"]``).
+    """
+    if schema is not None:
+        entries = onelake.list_paths(
+            credential.storage_token,
+            ws_id,
+            lh_id,
+            f"Tables/{schema}",
+            recursive=False,
+        )
+        return [
+            _basename(e["name"])
+            for e in entries
+            if e.get("isDirectory", "false") == "true"
+        ]
+
+    qualified: list[str] = []
+    for sch in list_schemas(credential, ws_id, lh_id):
+        qualified.extend(
+            f"{sch}.{name}"
+            for name in list_tables(credential, ws_id, lh_id, schema=sch)
+        )
+    return qualified
+
+
+def _basename(dfs_name: str) -> str:
+    """Return the final path segment of a DFS ``name`` field."""
+    return dfs_name.rstrip("/").rsplit("/", 1)[-1]
