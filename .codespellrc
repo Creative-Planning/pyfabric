@@ -7,4 +7,6 @@ skip = .git,*.pyc,*.pyo,.venv,build,dist,*.egg-info,.test-report.json,tests/fixt
 # - falsy: legitimate jargon (truthy/falsy)
 # - caf: matches the literal "café" (café) in test_logging.py's UTF-8
 #   round-trip test; codespell sees the ASCII prefix only.
-ignore-words-list = falsy,caf
+# - skool: the Skool community platform (https://www.skool.com), used
+#   as an example data source in claude_memory/open_mirror_landing_zone.md.
+ignore-words-list = falsy,caf,skool

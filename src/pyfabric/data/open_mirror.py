@@ -51,15 +51,19 @@ for the *why* behind each shape.
 
 from __future__ import annotations
 
+import io
 import json
+from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
 from pyfabric.data import onelake
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from pyfabric.client.auth import FabricCredential
 
 log = structlog.get_logger()
@@ -67,6 +71,110 @@ log = structlog.get_logger()
 
 _LANDING_ZONE_ROOT = "Files/LandingZone"
 _FILENAME_WIDTH = 20
+_ROW_MARKER_COLUMN = "__rowMarker__"
+
+
+# ── RowMarker ────────────────────────────────────────────────────────────────
+
+
+class RowMarker(IntEnum):
+    """Typed values for the mirror protocol's ``__rowMarker__`` column.
+
+    Subclassing :class:`IntEnum` so values can be used directly in
+    pyarrow array construction without a manual ``int()`` cast.
+    """
+
+    INSERT = 0
+    UPDATE = 1
+    DELETE = 2
+    UPSERT = 4
+
+
+WriteMode = Literal["insert", "update", "delete", "upsert"]
+_MODE_TO_MARKER: dict[WriteMode, RowMarker] = {
+    "insert": RowMarker.INSERT,
+    "update": RowMarker.UPDATE,
+    "delete": RowMarker.DELETE,
+    "upsert": RowMarker.UPSERT,
+}
+
+
+# ── Schema-compat helper ─────────────────────────────────────────────────────
+
+
+class OpenMirrorSchemaIncompatible(Exception):
+    """Raised by :func:`assert_schema_compat` when a producer's new arrow
+    schema would trigger Fabric's ``SchemaMergeFailure`` against the
+    mirror's existing column shape.
+
+    The ``violations`` attribute lists every offending column /
+    rule pair so callers can present a single diagnostic for a multi-
+    drift refactor instead of fixing one issue at a time.
+    """
+
+    def __init__(self, violations: list[str]) -> None:
+        self.violations = violations
+        super().__init__(
+            "OpenMirror schema incompatibility:\n  - " + "\n  - ".join(violations)
+        )
+
+
+def assert_schema_compat(old: pa.Schema, new: pa.Schema) -> None:
+    """Raise :class:`OpenMirrorSchemaIncompatible` if ``new`` would be
+    rejected by Fabric mirroring relative to ``old``.
+
+    Catches three drift patterns documented in the protocol:
+
+    - **Type changed** on an existing column (e.g. ``int32 → int64`` or
+      ``date32 → timestamp``). Fabric's mirror rewriter throws
+      ``SchemaMergeFailure`` and stops replicating.
+    - **New non-nullable column added.** Existing rows can't satisfy
+      it; new rows would have to fabricate a default. Keep new
+      columns nullable.
+    - **``__rowMarker__`` not last** in ``new``. Fabric requires it as
+      the trailing column.
+
+    Removing a column is **not** an error: Fabric keeps unioned
+    columns and NULLs out the absent value on new rows.
+
+    Args:
+        old: The schema currently understood by the mirror (the
+            previous file's schema, or a producer's registered
+            baseline).
+        new: The schema of the about-to-be-uploaded file.
+
+    Raises:
+        OpenMirrorSchemaIncompatible: If any drift pattern fires.
+    """
+    violations: list[str] = []
+
+    old_fields: dict[str, Any] = {f.name: f for f in old}
+    new_fields: dict[str, Any] = {f.name: f for f in new}
+
+    for name, new_field in new_fields.items():
+        if name in old_fields:
+            old_field = old_fields[name]
+            if not new_field.type.equals(old_field.type):
+                violations.append(
+                    f"column {name!r}: type changed from {old_field.type} "
+                    f"to {new_field.type}"
+                )
+        else:
+            if not new_field.nullable:
+                violations.append(
+                    f"column {name!r}: new column added as NOT NULL (must be nullable)"
+                )
+
+    if _ROW_MARKER_COLUMN in new_fields:
+        last = list(new_fields)[-1]
+        if last != _ROW_MARKER_COLUMN:
+            violations.append(
+                f"column {_ROW_MARKER_COLUMN!r} must be the last column; "
+                f"found {last!r} after it"
+            )
+
+    if violations:
+        raise OpenMirrorSchemaIncompatible(violations)
 
 
 class OpenMirrorClient:
@@ -231,10 +339,32 @@ class OpenMirrorClient:
             The full DFS path that was written (``Files/LandingZone/...``).
         """
         local = Path(local_path)
+        ext = local.suffix.lstrip(".") or "parquet"
+        return self._upload_bytes(
+            table,
+            local.read_bytes(),
+            schema=schema,
+            remote_filename=remote_filename,
+            extension=ext,
+        )
+
+    def _upload_bytes(
+        self,
+        table: str,
+        data: bytes,
+        *,
+        schema: str | None,
+        remote_filename: str | None,
+        extension: str,
+    ) -> str:
+        """Internal: upload a bytes payload to the table folder.
+
+        Shared by :meth:`upload_data_file` (file path → bytes) and
+        :meth:`write_rows` (arrow table → parquet bytes via BytesIO).
+        """
         if remote_filename is None:
-            ext = local.suffix.lstrip(".") or "parquet"
             remote_filename = self.next_data_filename(
-                table, schema=schema, extension=ext
+                table, schema=schema, extension=extension
             )
         folder = self.table_folder(table, schema=schema)
         remote_path = f"{folder}/{remote_filename}"
@@ -243,16 +373,113 @@ class OpenMirrorClient:
             self.workspace_id,
             self.mirror_id,
             remote_path,
-            local.read_bytes(),
+            data,
         )
         log.info(
-            "open_mirror_upload_data_file",
+            "open_mirror_upload",
             schema=schema,
             table=table,
             remote=remote_path,
-            bytes=local.stat().st_size,
+            bytes=len(data),
         )
         return remote_path
+
+    # ── High-level write_rows ───────────────────────────────────────────────
+
+    def write_rows(
+        self,
+        table: str,
+        arrow_table: pa.Table,
+        *,
+        schema: str | None = None,
+        mode: WriteMode | None = None,
+        expected_schema: pa.Schema | None = None,
+        remote_filename: str | None = None,
+    ) -> str:
+        """Convert an arrow table to parquet and upload it as the next
+        data file.
+
+        Two stamping paths:
+
+        - **Auto-stamped** (``mode != None``): the arrow table must
+          NOT already contain a ``__rowMarker__`` column. The helper
+          appends one with every row set to the corresponding
+          :class:`RowMarker` value.
+        - **Caller-stamped** (``mode is None``): the arrow table must
+          contain ``__rowMarker__`` and it must be the last column.
+          Useful when one file mixes inserts / updates / deletes.
+
+        If ``expected_schema`` is provided, :func:`assert_schema_compat`
+        runs **before** any upload — a mismatched schema raises
+        :class:`OpenMirrorSchemaIncompatible` with no DFS side effect.
+        Catches Fabric's silent ``SchemaMergeFailure`` gotcha at the
+        producer's pre-commit boundary.
+
+        Args:
+            table: Table name.
+            arrow_table: Rows to land. Column order is preserved.
+            schema: Optional ``<schema>.schema/`` namespace.
+            mode: Auto-stamp every row with the corresponding marker.
+                One of ``"insert"`` (0), ``"update"`` (1),
+                ``"delete"`` (2), ``"upsert"`` (4).
+            expected_schema: Optional baseline to validate against.
+            remote_filename: Override the auto-generated 20-digit
+                sequential name.
+
+        Returns:
+            The DFS path that was written.
+
+        Raises:
+            ValueError: If ``mode`` and ``__rowMarker__`` are both
+                present (ambiguous), or if ``mode`` is ``None`` and
+                ``__rowMarker__`` is missing or not last.
+            OpenMirrorSchemaIncompatible: If ``expected_schema`` is
+                provided and the table's schema doesn't satisfy
+                :func:`assert_schema_compat`.
+        """
+        import pyarrow as pa_mod
+        import pyarrow.parquet as pq
+
+        column_names = arrow_table.column_names
+
+        if mode is not None:
+            if _ROW_MARKER_COLUMN in column_names:
+                raise ValueError(
+                    f"mode={mode!r} stamps {_ROW_MARKER_COLUMN!r} but the arrow "
+                    "table already contains that column — pass mode=None to use "
+                    "the existing values, or drop the column to auto-stamp."
+                )
+            marker = _MODE_TO_MARKER[mode]
+            row_count = arrow_table.num_rows
+            arrow_table = arrow_table.append_column(
+                _ROW_MARKER_COLUMN,
+                pa_mod.array([int(marker)] * row_count, type=pa_mod.int32()),
+            )
+        else:
+            if _ROW_MARKER_COLUMN not in column_names:
+                raise ValueError(
+                    f"mode is None so {_ROW_MARKER_COLUMN!r} must be present in "
+                    "the arrow table; pass mode='insert'/'update'/'delete'/"
+                    "'upsert' to auto-stamp instead."
+                )
+            if column_names[-1] != _ROW_MARKER_COLUMN:
+                raise ValueError(
+                    f"{_ROW_MARKER_COLUMN!r} must be the last column; found "
+                    f"{column_names[-1]!r} after it."
+                )
+
+        if expected_schema is not None:
+            assert_schema_compat(expected_schema, arrow_table.schema)
+
+        buf = io.BytesIO()
+        pq.write_table(arrow_table, buf)
+        return self._upload_bytes(
+            table,
+            buf.getvalue(),
+            schema=schema,
+            remote_filename=remote_filename,
+            extension="parquet",
+        )
 
     # ── Cleanup observability ───────────────────────────────────────────────
 
