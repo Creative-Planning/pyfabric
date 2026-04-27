@@ -141,6 +141,17 @@ warn_unused_ignores = true
 module = ["requests.*", "pyodbc.*", "pyarrow.*", "pandas.*", "duckdb.*", "structlog.*", "deltalake.*"]
 ignore_missing_imports = true
 
+# pyarrow ships partial type info — on Linux, mypy --strict sees
+# pyarrow.parquet.write_table (and friends) as untyped functions and
+# fires ``no-untyped-call``; on Windows, mypy can't introspect the
+# compiled extensions and falls back to Any via the override above.
+# snapshot_delta is the only consumer; loosening just this one module
+# avoids both branches of that platform divergence without weakening
+# strict typing anywhere else.
+[[tool.mypy.overrides]]
+module = ["pyfabric.testing.fixtures"]
+disallow_untyped_calls = false
+
 # Ported fabric-libs modules — strict typing will be added iteratively.
 # Remove modules from this list as they get proper type annotations.
 [[tool.mypy.overrides]]
