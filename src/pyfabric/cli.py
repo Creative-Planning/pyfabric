@@ -173,6 +173,12 @@ def main(argv: list[str] | None = None) -> int:
             "        pyfabric emit-context > .github/copilot-instructions.md\n"
             "        pyfabric emit-context > .cursorrules\n"
             "\n"
+            "  pyfabric normalize-artifacts <path> [--dry-run]\n"
+            "      Walk a Fabric workspace tree and rewrite every artifact\n"
+            "      file (.platform, notebook-content.py, *.tmdl, *.json,\n"
+            "      *.yml, etc.) to the canonical bytes Fabric git-sync emits.\n"
+            "      Idempotent. Use --dry-run to report drift without writing.\n"
+            "\n"
             "  pyfabric --help\n"
             "      Show this help.\n"
         )
@@ -203,9 +209,61 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return emit_context()
 
+    if subcommand == "normalize-artifacts":
+        return _normalize_artifacts_main(rest)
+
     print(f"pyfabric: unknown command '{subcommand}'", file=sys.stderr)
     print("Run 'pyfabric --help' for available commands.", file=sys.stderr)
     return 2
+
+
+def _normalize_artifacts_main(argv: list[str]) -> int:
+    """Implementation of ``pyfabric normalize-artifacts``."""
+    parser = argparse.ArgumentParser(
+        prog="pyfabric normalize-artifacts",
+        description=(
+            "Walk a Fabric workspace tree and rewrite every artifact file "
+            "(.platform, notebook-content.py, *.tmdl, *.json, *.yml, etc.) "
+            "to the canonical bytes Fabric git-sync emits. Idempotent."
+        ),
+    )
+    parser.add_argument(
+        "path",
+        type=Path,
+        help="Workspace directory to walk (typically the folder containing "
+        "your *.{ItemType} subdirectories).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report files that would be rewritten without modifying them.",
+    )
+    # ``parse_args`` calls ``sys.exit(N)`` on ``--help`` or argument
+    # errors. Convert that to a normal return so callers (including the
+    # tests) get a proper exit code rather than a process kill.
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as e:
+        return int(e.code) if isinstance(e.code, int) else 2
+
+    if not args.path.is_dir():
+        print(
+            f"pyfabric normalize-artifacts: path is not a directory: {args.path}",
+            file=sys.stderr,
+        )
+        return 2
+
+    from pyfabric.items.normalize import normalize_tree
+
+    result = normalize_tree(args.path, dry_run=args.dry_run)
+    action = "would rewrite" if args.dry_run else "rewrote"
+    print(
+        f"pyfabric normalize-artifacts: {action} {len(result.changed)} "
+        f"of {len(result.checked)} artifact files in {args.path}"
+    )
+    for f in result.changed:
+        print(f"  {f.relative_to(args.path)}")
+    return 0
 
 
 if __name__ == "__main__":
