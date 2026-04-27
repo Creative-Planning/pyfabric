@@ -1,0 +1,25 @@
+// markdownlint-cli2 configuration. Conservative ruleset — start strict,
+// loosen only when a rule produces more noise than value.
+{
+  "config": {
+    "default": true,
+    // MD013 (line length) is too noisy for technical writing with URLs,
+    // and we already line-wrap prose by hand.
+    "MD013": false,
+    // MD033 (no inline HTML) blocks legitimate uses like <details> and
+    // <kbd>. Enable case-by-case if a specific tag becomes a problem.
+    "MD033": false,
+    // MD041 (first line must be a top-level heading) breaks for files
+    // that lead with frontmatter (e.g. claude_memory/*.md).
+    "MD041": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": [
+    ".venv/**",
+    "build/**",
+    "dist/**",
+    "*.egg-info/**",
+    "node_modules/**",
+    ".git/**"
+  ]
+}

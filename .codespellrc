@@ -1,0 +1,10 @@
+[codespell]
+# Skip generated, vendored, and binary content. Notebook fixture files
+# contain raw cell-marker syntax and synthetic IDs that confuse codespell.
+skip = .git,*.pyc,*.pyo,.venv,build,dist,*.egg-info,.test-report.json,tests/fixtures/notebooks/**,src/pyfabric/_version.py
+# Allowlist project-specific words. Add sparingly — every entry here is
+# a future false positive someone has to read past.
+# - falsy: legitimate jargon (truthy/falsy)
+# - caf: matches the literal "café" (café) in test_logging.py's UTF-8
+#   round-trip test; codespell sees the ASCII prefix only.
+ignore-words-list = falsy,caf

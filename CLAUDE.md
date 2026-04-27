@@ -23,7 +23,7 @@ generate and test Fabric item definitions locally.
 
 ## Sub-package Structure
 
-```
+```text
 src/pyfabric/
   client/       — Auth, REST API, HTTP client for Fabric service
   items/        — Create, load, save, validate Fabric item definitions
@@ -72,13 +72,14 @@ and must not be committed.
 
 All Fabric items follow this directory structure:
 
-```
+```text
 {DisplayName}.{ItemType}/
   .platform                 # Required: metadata + logicalId (UUID)
   {definition_files...}     # Item-specific content
 ```
 
 The `.platform` file uses schema version 2.0:
+
 ```json
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",

@@ -19,6 +19,18 @@ repos:
         pass_filenames: false
         entry: mypy src/
 
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.3.0
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
+        args: [--config=.codespellrc]
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.14.0
+    hooks:
+      - id: markdownlint-cli2
+
   - repo: local
     hooks:
       - id: pytest
