@@ -16,6 +16,7 @@ pip install --pre pyfabric[all]
 ```
 
 **Extras** (composable):
+
 - `azure` — `azure-identity`, `requests` (auth + HTTP)
 - `data` — `pyodbc`, `azure-storage-file-datalake` (OneLake DFS client)
 - `testing` — `duckdb`, `deltalake`, `pytest` (local lakehouse mirror +
@@ -40,6 +41,7 @@ for the current shell is the tenant pyfabric talks to. Pass `tenant=` to
 `FabricCredential` to override.
 
 **Pitfalls:**
+
 - `pip install pyfabric` (without `--pre`) fails or resolves a stub while the
   package is in beta.
 - If `az` isn't signed into the target tenant, pyfabric calls return 401/403.
@@ -78,6 +80,7 @@ df = lh.query("SELECT * FROM {table} LIMIT 10", table="customers")
 ```
 
 **Further reading:**
+
 - PyPI: <https://pypi.org/project/pyfabric/>
 - Source: <https://github.com/Creative-Planning/pyfabric>
 - `pyfabric install-claude-memory --help` — refresh these memories after upgrading pyfabric

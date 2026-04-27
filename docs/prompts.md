@@ -7,7 +7,7 @@ Microsoft Fabric items, validate them, and run local tests using pyfabric.
 
 ### Notebook
 
-```
+```text
 Create a Fabric notebook called nb_load_customers that:
 1. Reads a CSV file from OneLake path Tables/dbo/raw_customers
 2. Transforms the data: uppercase the name column, parse date strings to timestamps
@@ -18,7 +18,7 @@ Create a Fabric notebook called nb_load_customers that:
 
 ### Lakehouse
 
-```
+```text
 Using pyfabric, create a Fabric lakehouse definition called lh_silver in git-sync format.
 It should have:
 - defaultSchema set to "dbo"
@@ -30,7 +30,7 @@ Save at ws_dev/lh_silver.Lakehouse
 
 ### Environment
 
-```
+```text
 Using pyfabric, create a Fabric environment definition called env_data_processing.
 It should:
 - Include pip dependencies: pandas>=2.0, pyarrow>=14.0, deltalake>=0.17
@@ -41,7 +41,7 @@ with the correct nested directory structure
 
 ### Variable Library
 
-```
+```text
 Using pyfabric, create a Fabric variable library called vl_config with:
 - Variables: workspace_id (String), lakehouse_id (String), env_name (String)
 - Default values for a dev environment
@@ -56,7 +56,7 @@ not suffixed names (StringVariable, etc.).
 
 ### Dataflow
 
-```
+```text
 Using pyfabric, create a Fabric dataflow definition called df_load_source_data that
 [TODO]
 Save in git-sync format at ws_dev/df_load_source_data.Dataflow/
@@ -64,7 +64,7 @@ Save in git-sync format at ws_dev/df_load_source_data.Dataflow/
 
 ### Semantic Model
 
-```
+```text
 Create a Fabric semantic model definition called sm_sales_analytics.
 [TODO]
 Save in git-sync format at ws_dev/sm_sales_analytics.SemanticModel/
@@ -72,7 +72,7 @@ Save in git-sync format at ws_dev/sm_sales_analytics.SemanticModel/
 
 ### Pipeline
 
-```
+```text
 Using pyfabric, create a Fabric pipeline definition called pl_daily_refresh. It has two activities, first running nb_load_customers then when that completes successfully, runs nb_transform data.
 ```
 
@@ -80,13 +80,13 @@ Using pyfabric, create a Fabric pipeline definition called pl_daily_refresh. It 
 
 ### Validate a single item
 
-```
+```text
 Use pyfabric to validate the nb_load_customers notebook
 ```
 
 ### Validate an entire workspace
 
-```
+```text
 Use pyfabric to validate all Fabric items in the workspace at ws_dev
 Print a summary showing which items pass and which fail.
 ```
@@ -95,7 +95,7 @@ Print a summary showing which items pass and which fail.
 
 ### Test a notebook's SQL logic
 
-```
+```text
 Write a pytest test for nb_load_customers that:
 1. Uses the fabric_spark fixture (DuckDB-backed SparkSession)
 2. Creates a test Delta table at lh_bronze/Tables/raw_customers with sample data
@@ -106,7 +106,7 @@ Write a pytest test for nb_load_customers that:
 
 ### Test with notebookutils
 
-```
+```text
 Write a pytest test that verifies notebook file operations:
 1. Uses the mock_notebookutils fixture
 2. Creates directories with fs.mkdirs
@@ -120,7 +120,7 @@ Run with: pytest tests/test_file_operations.py -v
 
 ### Test data quality
 
-```
+```text
 Write pytest tests that validate data quality in a DuckDB table:
 1. Use the sample_db fixture from pyfabric's test fixtures
 2. Check for NULL values in required columns
@@ -134,7 +134,7 @@ Run with: pytest tests/test_data_quality.py -v --tb=long
 
 ### Run validation against a real workspace
 
-```
+```text
 Run pyfabric's E2E validation tests against my local Fabric workspace:
 
 PYFABRIC_TEST_WORKSPACE=C:/path/to/my/workspace/dev pytest tests/items/test_validate_e2e.py -v
@@ -146,7 +146,7 @@ If any items fail validation, explain what's wrong and how to fix it.
 
 ### Read a test report
 
-```
+```text
 Read the pytest JSON report at .test-report.json and:
 1. List all failed tests with their error messages
 2. For each failure, identify the root cause
@@ -156,7 +156,7 @@ Read the pytest JSON report at .test-report.json and:
 
 ### Read log files
 
-```
+```text
 Read the structlog JSON log file at .logs/my_script_20250401.jsonl and:
 1. Find all ERROR and WARNING entries
 2. Group related log entries by timestamp and context
@@ -168,7 +168,7 @@ Read the structlog JSON log file at .logs/my_script_20250401.jsonl and:
 
 ### List workspace items
 
-```
+```text
 Using pyfabric, connect to my Fabric tenant and:
 1. List all workspaces I have access to
 2. For a specific workspace, list all items grouped by type
@@ -179,7 +179,7 @@ Use FabricCredential with my tenant, FabricClient, and list_items().
 
 ### Create and upload an item
 
-```
+```text
 Using pyfabric, create a new Notebook called nb_hello_world with a simple
 print statement, then:
 1. Build an ArtifactBundle
@@ -192,7 +192,7 @@ Use pyfabric.items.bundle and pyfabric.items.validate.
 
 ### Read lakehouse data
 
-```
+```text
 Using pyfabric, read data from my Fabric lakehouse:
 1. Connect with FabricCredential
 2. Use read_table() to read dbo.customers from lh_bronze
