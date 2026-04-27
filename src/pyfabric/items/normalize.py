@@ -82,6 +82,8 @@ ARTIFACT_GLOBS: tuple[str, ...] = (
     "*.Report/definition.pbir",
     "*.Report/definition/**/*.json",
     "*.Report/definition/**/*.pbir",
+    "*.MirroredDatabase/.platform",
+    "*.MirroredDatabase/mirroring.json",
 )
 
 # File-type-specific rules. First match wins. Order matters.
@@ -278,5 +280,6 @@ _ITEM_TYPES: frozenset[str] = frozenset(
         "VariableLibrary",
         "SemanticModel",
         "Report",
+        "MirroredDatabase",
     }
 )
