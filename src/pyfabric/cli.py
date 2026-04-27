@@ -179,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
             "      *.yml, etc.) to the canonical bytes Fabric git-sync emits.\n"
             "      Idempotent. Use --dry-run to report drift without writing.\n"
             "\n"
+            "  pyfabric demo <workspace_name> [--show-definitions]\n"
+            "      Read-only workspace inspection: list workspaces, resolve\n"
+            "      one by display name, summarise items. First-run smoke\n"
+            "      test for install + auth.\n"
+            "\n"
             "  pyfabric --help\n"
             "      Show this help.\n"
         )
@@ -211,6 +216,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if subcommand == "normalize-artifacts":
         return _normalize_artifacts_main(rest)
+
+    if subcommand == "demo":
+        from pyfabric.demo import main as demo_main
+
+        return demo_main(rest)
 
     print(f"pyfabric: unknown command '{subcommand}'", file=sys.stderr)
     print("Run 'pyfabric --help' for available commands.", file=sys.stderr)

@@ -57,6 +57,21 @@ pyfabric.
 
 ## Quick start
 
+### First-run smoke test
+
+After `pip install --pre "pyfabric[azure]"`, verify install + auth + the
+core read APIs in one command:
+
+```bash
+pyfabric demo "<your_workspace_display_name>"
+pyfabric demo "<your_workspace_display_name>" --show-definitions
+```
+
+It lists accessible workspaces, resolves the one you named (with
+case-insensitive and "did you mean" fallbacks), and summarises its
+items. Read-only — no writes, no pushes. Equivalent script form:
+[`examples/workspace_demo.py`](examples/workspace_demo.py).
+
 ### Validate a Fabric workspace
 
 ```python
