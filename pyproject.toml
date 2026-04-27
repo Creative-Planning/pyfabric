@@ -100,6 +100,12 @@ packages = ["src/pyfabric"]
 target-version = "py312"
 line-length = 88
 indent-width = 4
+extend-exclude = [
+    # Fabric notebook fixtures contain raw cell-marker syntax (e.g.
+    # ``%pip install ...``) that isn't valid Python. They exist to be
+    # parsed as bytes by NotebookBuilder tests, not run as scripts.
+    "tests/fixtures/notebooks/**/notebook-content.py",
+]
 
 [tool.ruff.lint]
 select = [
