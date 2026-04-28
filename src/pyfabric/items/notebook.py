@@ -64,10 +64,20 @@ class _Lakehouse:
 
 
 @dataclass
+class _Environment:
+    env_id: str
+    ws_id: str  # all-zeros means "same workspace as the notebook"
+
+
+@dataclass
 class _Cell:
     kind: Literal["markdown", "code"]
     content: str
     language: CellLanguage | None = None  # code-only
+
+
+_SAME_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000"
+_NOTEBOOK_SETTINGS_JSON = '{"includeResourcesInGit": "on"}'
 
 
 class NotebookBuilder:
@@ -87,6 +97,7 @@ class NotebookBuilder:
         self.kernel = kernel
         self._lakehouses: list[_Lakehouse] = []
         self._default_lakehouse_idx: int | None = None
+        self._environment: _Environment | None = None
         self._cells: list[_Cell] = []
 
     # ── Lakehouse attach ─────────────────────────────────────────────────────
@@ -114,6 +125,39 @@ class NotebookBuilder:
         self._lakehouses.append(_Lakehouse(ws_id=ws_id, lh_id=lh_id, lh_name=lh_name))
         if default:
             self._default_lakehouse_idx = len(self._lakehouses) - 1
+        return self
+
+    # ── Environment attach ───────────────────────────────────────────────────
+
+    def attach_environment(
+        self,
+        env_id: str,
+        *,
+        ws_id: str | None = None,
+    ) -> "NotebookBuilder":
+        """Attach a Fabric Environment dependency to the notebook.
+
+        Adds an ``environment`` block under ``dependencies`` in the
+        notebook header METADATA. The environment supplies any
+        non-runtime Python packages the notebook needs (e.g. a
+        project's own helper wheel pinned via the Environment's
+        custom libraries).
+
+        Args:
+            env_id: Environment logicalId (the GUID Fabric uses to
+                identify the Environment item).
+            ws_id: Workspace GUID hosting the Environment. Pass
+                ``None`` (default) when the Environment lives in the
+                same workspace as the notebook — Fabric's convention
+                is to render that as an all-zeros GUID.
+
+        A second call replaces the first attachment; only one
+        environment per notebook is supported.
+        """
+        self._environment = _Environment(
+            env_id=env_id,
+            ws_id=ws_id if ws_id is not None else _SAME_WORKSPACE_ID,
+        )
         return self
 
     # ── Cells ────────────────────────────────────────────────────────────────
@@ -174,13 +218,25 @@ class NotebookBuilder:
         line endings on non-Unix hosts.
         """
         source = self.to_source_string()
-        canonical = canonical_bytes(
+        canonical_content = canonical_bytes(
             "nb.Notebook/notebook-content.py", source.encode("utf-8")
         )
+        # notebook-settings.json: required for Fabric to include
+        # Resources/ in git-sync. Emit unconditionally — a no-op when
+        # Resources/ is empty, but the moment a project wheel ships
+        # via pip_install_from_resources the file is mandatory.
+        canonical_settings = canonical_bytes(
+            "nb.Notebook/notebook-settings.json",
+            _NOTEBOOK_SETTINGS_JSON.encode("utf-8"),
+        )
+        parts: dict[str, bytes | str] = {
+            "notebook-content.py": canonical_content,
+            "notebook-settings.json": canonical_settings,
+        }
         kwargs: dict[str, object] = {
             "item_type": "Notebook",
             "display_name": display_name,
-            "parts": {"notebook-content.py": canonical},
+            "parts": parts,
             "description": description,
         }
         if logical_id is not None:
@@ -212,11 +268,14 @@ class NotebookBuilder:
         artifact_dir = Path(output_dir) / bundle.dir_name
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        # Route both files through write_artifact_file so line-ending
+        # Route every file through write_artifact_file so line-ending
         # rules are applied regardless of OS default.
         write_artifact_file(artifact_dir / ".platform", bundle.platform_json())
         write_artifact_file(
             artifact_dir / "notebook-content.py", self.to_source_string()
+        )
+        write_artifact_file(
+            artifact_dir / "notebook-settings.json", _NOTEBOOK_SETTINGS_JSON
         )
         log.info(
             "notebook_saved",
@@ -241,20 +300,29 @@ class NotebookBuilder:
         return self._meta_block(body)
 
     def _dependencies_block(self) -> dict[str, object] | None:
-        if not self._lakehouses:
+        if not self._lakehouses and self._environment is None:
             return None
         dep: dict[str, object] = {}
-        lakehouse: dict[str, object] = {}
 
-        if self._default_lakehouse_idx is not None:
-            default = self._lakehouses[self._default_lakehouse_idx]
-            lakehouse["default_lakehouse"] = default.lh_id
-            if default.lh_name is not None:
-                lakehouse["default_lakehouse_name"] = default.lh_name
-            lakehouse["default_lakehouse_workspace_id"] = default.ws_id
+        if self._lakehouses:
+            lakehouse: dict[str, object] = {}
+            if self._default_lakehouse_idx is not None:
+                default = self._lakehouses[self._default_lakehouse_idx]
+                lakehouse["default_lakehouse"] = default.lh_id
+                if default.lh_name is not None:
+                    lakehouse["default_lakehouse_name"] = default.lh_name
+                lakehouse["default_lakehouse_workspace_id"] = default.ws_id
+            lakehouse["known_lakehouses"] = [
+                {"id": lh.lh_id} for lh in self._lakehouses
+            ]
+            dep["lakehouse"] = lakehouse
 
-        lakehouse["known_lakehouses"] = [{"id": lh.lh_id} for lh in self._lakehouses]
-        dep["lakehouse"] = lakehouse
+        if self._environment is not None:
+            dep["environment"] = {
+                "environmentId": self._environment.env_id,
+                "workspaceId": self._environment.ws_id,
+            }
+
         return dep
 
     def _render_cell(self, cell: _Cell) -> str:

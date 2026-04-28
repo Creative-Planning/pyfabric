@@ -213,3 +213,127 @@ class TestSaveToDisk:
         artifact_dir = nb.save_to_disk(tmp_path, display_name="nb_test")
         assert artifact_dir == tmp_path / "nb_test.Notebook"
         assert artifact_dir.is_dir()
+
+
+class TestNotebookSettingsJson:
+    """Fabric requires ``notebook-settings.json`` with
+    ``{"includeResourcesInGit": "on"}`` to include the
+    ``Resources/`` subtree in git-sync. Without it, wheels under
+    ``Resources/builtin/`` are silently excluded from the
+    workspace item, so a `%pip install "builtin/..."` cell in
+    ``notebook-content.py`` fails at runtime.
+
+    ``save_to_disk`` and ``to_bundle`` must emit the file
+    unconditionally — a no-op when ``Resources/`` is empty, but
+    necessary the moment a project ships any wheel via
+    ``pip_install_from_resources``.
+    """
+
+    def test_save_to_disk_emits_notebook_settings_json(self, tmp_path):
+        nb = NotebookBuilder().pip_install_from_resources(
+            "my_project-0.1.0-py3-none-any.whl"
+        )
+        artifact_dir = nb.save_to_disk(tmp_path, display_name="nb_x")
+        settings_path = artifact_dir / "notebook-settings.json"
+        assert settings_path.is_file()
+        import json
+
+        body = json.loads(settings_path.read_text(encoding="utf-8"))
+        assert body == {"includeResourcesInGit": "on"}
+
+    def test_save_to_disk_emits_settings_even_without_resources(self, tmp_path):
+        """Always-on guarantees: a notebook that doesn't currently use
+        Resources/ but later grows one stays correct without rewriting
+        save_to_disk callers."""
+        nb = NotebookBuilder()
+        artifact_dir = nb.save_to_disk(tmp_path, display_name="nb_y")
+        assert (artifact_dir / "notebook-settings.json").is_file()
+
+    def test_notebook_settings_uses_lf_no_trailing_newline(self, tmp_path):
+        """notebook-settings.json follows the standard "JSON config"
+        convention: LF, no trailing newline (same as .platform)."""
+        nb = NotebookBuilder()
+        artifact_dir = nb.save_to_disk(tmp_path, display_name="nb_z")
+        raw = (artifact_dir / "notebook-settings.json").read_bytes()
+        assert b"\r\n" not in raw
+        assert not raw.endswith(b"\n")
+
+    def test_to_bundle_includes_notebook_settings_part(self):
+        nb = NotebookBuilder()
+        bundle = nb.to_bundle(display_name="nb_b")
+        assert "notebook-settings.json" in bundle.parts
+
+
+class TestAttachEnvironment:
+    """``attach_environment`` adds a Fabric environment dependency
+    to the notebook header METADATA block. The environment block
+    accompanies any ``lakehouse`` block under ``dependencies``.
+
+    Workspace ID convention: when the environment lives in the
+    same workspace as the notebook (the common case), Fabric uses
+    an all-zeros ``workspaceId`` instead of the actual workspace
+    GUID. ``ws_id=None`` selects this default.
+    """
+
+    _ZERO_WS = "00000000-0000-0000-0000-000000000000"
+
+    def test_default_ws_id_is_all_zeros(self):
+        nb = NotebookBuilder().attach_environment("env-logical-1")
+        src = nb.to_source_string()
+        assert '"environment"' in src
+        assert '"environmentId": "env-logical-1"' in src
+        assert f'"workspaceId": "{self._ZERO_WS}"' in src
+
+    def test_explicit_ws_id_is_emitted(self):
+        nb = NotebookBuilder().attach_environment(
+            "env-logical-2", ws_id="aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"
+        )
+        src = nb.to_source_string()
+        assert '"environmentId": "env-logical-2"' in src
+        assert '"workspaceId": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb"' in src
+
+    def test_environment_block_lives_under_dependencies(self):
+        nb = NotebookBuilder().attach_environment("env-1")
+        src = nb.to_source_string()
+        # The environment block must be inside the dependencies object,
+        # not a sibling of kernel_info.
+        deps_idx = src.index('"dependencies"')
+        env_idx = src.index('"environment"')
+        kernel_idx = src.index('"kernel_info"')
+        assert kernel_idx < deps_idx < env_idx
+
+    def test_environment_alongside_lakehouse(self):
+        nb = (
+            NotebookBuilder()
+            .attach_lakehouse(
+                ws_id="ws-1",
+                lh_id="lh-1",
+                lh_name="lh_primary",
+                default=True,
+            )
+            .attach_environment("env-1")
+        )
+        src = nb.to_source_string()
+        assert '"lakehouse"' in src
+        assert '"environment"' in src
+        assert '"environmentId": "env-1"' in src
+
+    def test_chainable(self):
+        nb = NotebookBuilder()
+        result = nb.attach_environment("env-1")
+        assert result is nb
+
+    def test_second_call_replaces_first(self):
+        """Only one environment can be attached at a time. A second
+        call replaces the first rather than producing two
+        ``environment`` keys (which Fabric would silently reduce to
+        the last one anyway, so the explicit replace is more
+        honest)."""
+        nb = (
+            NotebookBuilder()
+            .attach_environment("env-old")
+            .attach_environment("env-new")
+        )
+        src = nb.to_source_string()
+        assert '"environmentId": "env-new"' in src
+        assert "env-old" not in src
