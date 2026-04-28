@@ -10,6 +10,41 @@ and locally testing Microsoft Fabric items that are compatible with Fabric
 git sync. Target users are AI coding assistants and developers who need to
 generate and test Fabric item definitions locally.
 
+## What pyfabric is — and is not
+
+pyfabric is a **dev-time / build-time** tool. It runs on the developer's
+machine (or in CI), not inside Fabric. Its three jobs are:
+
+1. **Create** Fabric artifacts (notebooks, semantic models, reports,
+   variable libraries, lakehouse DDL) as files committed to a
+   git-synced workspace repo.
+2. **Test locally** — DuckDB lakehouse mock, OneLake helpers, schema
+   validation, transform logic — without standing up Fabric.
+3. **Manage Fabric operationally** from outside the platform — trigger
+   notebook runs via the Jobs API, refresh semantic models, audit
+   workspaces.
+
+**pyfabric is NOT a notebook runtime dependency.** A Fabric Spark
+notebook should not `import pyfabric`. Several past sessions have
+wasted time trying to install pyfabric inside Fabric (in
+`Resources/builtin/`, in custom Environments, via `%pip install
+pyfabric` cells). The right pattern is:
+
+- Notebooks stay thin — orchestration only.
+- The project's transform / DDL / SQL helpers live in a project
+  wheel (e.g. `fabric_utils-*.whl`) shipped via
+  `Resources/builtin/` (see `claude_memory/notebook_wheel_resources_pattern.md`).
+- That project wheel depends only on Fabric Spark runtime
+  pre-installed packages (`azure-identity`,
+  `azure-storage-file-datalake`, `pyarrow`, `requests`), not on
+  pyfabric.
+- pyfabric stays on the dev machine, where it builds and validates
+  the notebook + the project wheel.
+
+When you find yourself reaching for pyfabric inside a notebook,
+that's a sign the logic should move into the project wheel where
+it's locally testable; the notebook then calls the wheel.
+
 ## Technical Stack
 
 - **Python**: 3.12+ (use modern syntax: `type X = ...`, `match`, `X | Y` unions)
