@@ -2,6 +2,8 @@
 
 import base64
 
+import pytest
+
 from pyfabric.items.crud import (
     create_item,
     decode_part,
@@ -32,6 +34,29 @@ class TestDecodePart:
         payload = base64.b64encode(b"hello world").decode()
         result = decode_part({"payload": payload})
         assert result == b"hello world"
+
+    def test_round_trip_with_encode_part(self):
+        """``decode_part(encode_part(path, content))`` returns the
+        original content. Documents the inverse pairing."""
+        original = b"some bytes \x01\x02"
+        part = encode_part("file.bin", original)
+        assert decode_part(part) == original
+
+    def test_string_input_raises_helpful_typeerror(self):
+        """A caller who passes ``part['payload']`` (the base64 string)
+        instead of the part dict gets a clear pointer to the right
+        usage, not a cryptic ``string indices must be integers``.
+        """
+        payload = base64.b64encode(b"x").decode()
+        with pytest.raises(TypeError) as exc:
+            decode_part(payload)  # type: ignore[arg-type]
+        msg = str(exc.value)
+        assert "decode_part" in msg
+        assert "dict" in msg
+
+    def test_non_dict_non_string_raises_typeerror(self):
+        with pytest.raises(TypeError):
+            decode_part(42)  # type: ignore[arg-type]
 
 
 class TestItemCrud:

@@ -252,8 +252,14 @@ class LocalLakehouse:
         by_name = {t.name: t for t in tables}
         for table_name, missing in drift.items():
             table = by_name[table_name]
+            # Walk .columns directly instead of calling table.column(name).
+            # The latter is an in-pyfabric helper not part of the documented
+            # protocol — duck-typed TableDef-like objects from downstream
+            # callers (which expose `.columns`, `.name`, `.to_duckdb_ddl()`)
+            # don't have it.
+            cols_by_name = {c.name: c for c in table.columns}
             for col_name in missing:
-                col = table.column(col_name)
+                col = cols_by_name[col_name]
                 duck_type = DUCKDB_TYPES[col.type_key]
                 self._conn.execute(
                     f"ALTER TABLE {self.schema}.{table_name} "

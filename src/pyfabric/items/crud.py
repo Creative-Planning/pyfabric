@@ -185,5 +185,32 @@ def encode_part(path: str, content: str | bytes) -> dict:
 
 
 def decode_part(part: dict) -> bytes:
-    """Decode the base64 payload from a definition part dict."""
+    """
+    Decode the base64 payload from a definition part dict.
+
+    Inverse of :func:`encode_part` — pass the whole part dict
+    (e.g. an entry from ``defn["definition"]["parts"]``), not the
+    bare ``payload`` string::
+
+        part = encode_part("notebook-content.py", "print('hi')")
+        assert decode_part(part) == b"print('hi')"
+
+    Args:
+        part: A part dict with at least a ``"payload"`` key holding a
+            base64-encoded string (``payloadType: "InlineBase64"``).
+
+    Returns:
+        The decoded bytes of ``part["payload"]``.
+
+    Raises:
+        TypeError: If ``part`` is not a dict. The most common cause is
+            passing ``part["payload"]`` directly; the message points
+            back to the right call shape.
+    """
+    if not isinstance(part, dict):
+        raise TypeError(
+            f"decode_part expects a part dict (e.g. an entry from "
+            f"definition['parts']), got {type(part).__name__}. "
+            f"Pass the whole part dict, not part['payload']."
+        )
     return base64.b64decode(part["payload"])
