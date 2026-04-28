@@ -267,3 +267,70 @@ class TestRegisterOnDriftInvalid:
                 ),
                 on_drift="wat",  # type: ignore[arg-type]
             )
+
+
+class TestEvolveSchemaDuckTypedTableDef:
+    """``evolve_schema`` should accept any object exposing ``.name``,
+    ``.columns: Iterable[Col]``, and ``.to_duckdb_ddl(schema)`` — not
+    require the in-pyfabric ``TableDef.column(name)`` helper. Downstream
+    packages that built TableDef-like classes against the earlier API
+    surface (columns + to_duckdb_ddl + column_names) hit AttributeError
+    when ``evolve_schema`` calls ``table.column(col_name)``.
+    """
+
+    def test_evolve_schema_accepts_ducktyped_table_def(self, tmp_path):
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _DuckTableDef:
+            """Minimal TableDef-like class — no ``.column(name)`` method."""
+
+            name: str
+            columns: tuple[Col, ...]
+
+            def to_duckdb_ddl(self, schema: str | None = None) -> str:
+                from pyfabric.data.schema import DUCKDB_TYPES
+
+                lines = []
+                for c in self.columns:
+                    duck_type = DUCKDB_TYPES[c.type_key]
+                    null = "" if c.nullable else " NOT NULL"
+                    lines.append(f"  {c.name} {duck_type}{null}")
+                cols = ",\n".join(lines)
+                qualified = f"{schema}.{self.name}" if schema else self.name
+                return f"CREATE TABLE IF NOT EXISTS {qualified} (\n{cols}\n)"
+
+        db = tmp_path / "duck.duckdb"
+        with _reopen(db) as lh:
+            v1 = _DuckTableDef(
+                name="widgets",
+                columns=(
+                    Col("id", "int", nullable=False, pk=True),
+                    Col("name", "string"),
+                ),
+            )
+            # Bootstrap the table via execute_ddl since register() doesn't
+            # accept duck-typed defs (it stores them in self._tables for
+            # insert_typed validation, which is fine to skip).
+            lh.execute_ddl([v1.to_duckdb_ddl(lh.schema)])
+
+        with _reopen(db) as lh:
+            v2 = _DuckTableDef(
+                name="widgets",
+                columns=(
+                    Col("id", "int", nullable=False, pk=True),
+                    Col("name", "string"),
+                    Col("color", "string"),  # NEW
+                ),
+            )
+            n_altered = lh.evolve_schema([v2])  # must not raise AttributeError
+            assert n_altered == 1
+            cols = [
+                r[0]
+                for r in lh.conn.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'dbo' AND table_name = 'widgets' "
+                    "ORDER BY ordinal_position"
+                ).fetchall()
+            ]
+            assert cols == ["id", "name", "color"]

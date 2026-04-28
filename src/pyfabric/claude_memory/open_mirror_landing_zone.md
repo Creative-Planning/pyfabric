@@ -132,10 +132,74 @@ For recovery, use Delta time-travel on the mirrored table
    producer run is fine — it's an overwrite).
 4. Build a parquet with the producer's pinned `pa.schema([…])` —
    never let pandas type-inference pick column types; that's how
-   `int32 → int64` widening sneaks in.
+   `int32 → int64` widening sneaks in. Cast each column explicitly
+   before constructing the arrow table:
+
+   ```python
+   PINNED = pa.schema([
+       pa.field("employee_id", pa.string(),                 nullable=False),
+       pa.field("date",        pa.date32(),                 nullable=False),
+       pa.field("hours",       pa.float64(),                nullable=True),
+       pa.field("fetched_at",  pa.timestamp("us", tz="UTC"), nullable=False),
+   ])
+
+   pdf = df.toPandas()
+   pdf["date"]       = pd.to_datetime(pdf["date"]).dt.date
+   pdf["hours"]      = pd.to_numeric(pdf["hours"], errors="coerce")
+   pdf["fetched_at"] = pd.Timestamp.now(tz="UTC")
+   arrow = pa.Table.from_pandas(pdf, schema=PINNED, safe=True)
+   ```
+
 5. `client.write_rows(table, arrow, schema=…, mode="upsert")` (or
    another mode), or use `upload_data_file` with a pre-built parquet.
-6. Within minutes, the row shows in the mirror's SQL endpoint.
+
+   - `expected_schema` is optional. If supplied under
+     `mode != None`, pass the **producer's natural schema** (no
+     `__rowMarker__`); pyfabric ≥ v0.1.0rc1 compares against the
+     pre-stamp shape. On older releases the check ran post-stamp
+     and either rejected legitimate writes or hid drift; validate
+     types in the producer's own `build_X_arrow_table` step in
+     that case.
+
+6. Visibility — observed end-to-end latency from a healthy mirror:
+
+   | Stage | Typical latency |
+   |---|---|
+   | Upload file to landing zone | < 5 seconds |
+   | Landing zone → mirror sync cycle | 2 – 10 min (periodic; not manually triggerable) |
+   | Sync → SQL endpoint visible | 1 – 3 min |
+   | **Total: upload → SQL** | **3 – 15 min** |
+
+   If a row hasn't appeared in 20 min, check the mirror's status
+   in the portal before assuming the producer is at fault.
+
+## Caller-stamped CDC (mixed INSERT / UPDATE / DELETE in one file)
+
+When the source already provides a change-type column, stamp
+`__rowMarker__` yourself and pass `mode=None` to `write_rows`. The
+auto-stamp path can only emit a single marker per file.
+
+```python
+_CHANGE_TYPE_MAP = {"INSERT": 0, "UPDATE": 1, "DELETE": 2, "UPSERT": 4}
+markers = [_CHANGE_TYPE_MAP[v] for v in pdf["change_type"].str.upper()]
+
+arrow_table = arrow_table.append_column(
+    "__rowMarker__",
+    pa.array(markers, type=pa.int32()),
+)
+
+mirror.write_rows(table, arrow_table, schema=..., mode=None)
+```
+
+Requirements:
+
+- `__rowMarker__` must be the **last column**. `write_rows` raises
+  `ValueError` otherwise.
+- Delete rows need only the key columns populated; the rest may be
+  null. Insert / update / upsert rows need the full row.
+- Don't combine `mode=...` with a pre-existing `__rowMarker__`
+  column — `write_rows` raises `ValueError` rather than silently
+  overwriting.
 
 ## What this does NOT cover
 

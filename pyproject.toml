@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Python libraries helping AI coding assistants create and locally validate Microsoft Fabric items compatible with Fabric git sync."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [
     { name = "Creative Planning", email = "20804442+hughdecatte@users.noreply.github.com" },
 ]
@@ -17,6 +17,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
@@ -97,7 +98,7 @@ packages = ["src/pyfabric"]
 # -- Ruff ------------------------------------------------------------------
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 88
 indent-width = 4
 extend-exclude = [
@@ -131,7 +132,7 @@ docstring-code-format = true
 # -- Mypy ------------------------------------------------------------------
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
