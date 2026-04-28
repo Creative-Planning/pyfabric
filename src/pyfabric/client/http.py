@@ -154,7 +154,10 @@ class FabricClient:
             if resp.status_code == 200:
                 body = resp.json() if resp.text else {}
                 status = body.get("status", "")
-                if status in ("Succeeded", ""):
+                # Fabric LRO success vocabulary varies by surface:
+                # "Succeeded" for items/workspaces, "Completed" for the
+                # Jobs API (RunNotebook). Empty body == sync 200.
+                if status in ("Succeeded", "Completed", ""):
                     return body
                 if status in ("Failed", "Cancelled"):
                     raise FabricError(resp.status_code, resp.text, location)

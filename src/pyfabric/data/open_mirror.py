@@ -410,9 +410,13 @@ class OpenMirrorClient:
           Useful when one file mixes inserts / updates / deletes.
 
         If ``expected_schema`` is provided, :func:`assert_schema_compat`
-        runs **before** any upload — a mismatched schema raises
-        :class:`OpenMirrorSchemaIncompatible` with no DFS side effect.
-        Catches Fabric's silent ``SchemaMergeFailure`` gotcha at the
+        runs **before any auto-stamp or upload** — the schema is
+        compared against the caller's arrow table as supplied, not the
+        post-stamp shape. So under ``mode != None``, ``expected_schema``
+        should NOT include ``__rowMarker__``; it represents the
+        producer's natural columns. A mismatch raises
+        :class:`OpenMirrorSchemaIncompatible` with no DFS side effect,
+        catching Fabric's silent ``SchemaMergeFailure`` gotcha at the
         producer's pre-commit boundary.
 
         Args:
@@ -442,6 +446,10 @@ class OpenMirrorClient:
 
         column_names = arrow_table.column_names
 
+        # Structural validation first — cheap checks that protect against
+        # ambiguous mode + marker combinations. Running these before
+        # assert_schema_compat keeps their precise ValueError diagnostics
+        # rather than letting schema-compat fire a less specific message.
         if mode is not None:
             if _ROW_MARKER_COLUMN in column_names:
                 raise ValueError(
@@ -449,12 +457,6 @@ class OpenMirrorClient:
                     "table already contains that column — pass mode=None to use "
                     "the existing values, or drop the column to auto-stamp."
                 )
-            marker = _MODE_TO_MARKER[mode]
-            row_count = arrow_table.num_rows
-            arrow_table = arrow_table.append_column(
-                _ROW_MARKER_COLUMN,
-                pa_mod.array([int(marker)] * row_count, type=pa_mod.int32()),
-            )
         else:
             if _ROW_MARKER_COLUMN not in column_names:
                 raise ValueError(
@@ -468,8 +470,22 @@ class OpenMirrorClient:
                     f"{column_names[-1]!r} after it."
                 )
 
+        # Validate caller's schema BEFORE any auto-stamping. The
+        # expected_schema is the producer's view of the data, which
+        # naturally excludes __rowMarker__ when mode != None. Running
+        # the check against the post-stamp shape would either reject
+        # legitimate writes (when append_column produces a NOT NULL
+        # field) or produce a misleading "new column added" diagnostic.
         if expected_schema is not None:
             assert_schema_compat(expected_schema, arrow_table.schema)
+
+        if mode is not None:
+            marker = _MODE_TO_MARKER[mode]
+            row_count = arrow_table.num_rows
+            arrow_table = arrow_table.append_column(
+                _ROW_MARKER_COLUMN,
+                pa_mod.array([int(marker)] * row_count, type=pa_mod.int32()),
+            )
 
         buf = io.BytesIO()
         pq.write_table(arrow_table, buf)

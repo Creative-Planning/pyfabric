@@ -333,3 +333,93 @@ class TestWriteRowsSchemaCheck:
         ):
             client.write_rows("t", tbl, schema="s", expected_schema=expected)
         up.assert_called_once()
+
+
+class TestWriteRowsSchemaCheckPreStamp:
+    """The ``expected_schema`` validation must run against the
+    *caller-visible* shape of ``arrow_table`` — i.e. the shape before
+    ``write_rows`` auto-stamps ``__rowMarker__``. Otherwise callers
+    using ``mode='insert'`` (etc.) are forced to either include the
+    marker in ``expected_schema`` (defeating the purpose of mode-based
+    stamping) or skip the check entirely.
+    """
+
+    def test_auto_stamp_accepts_expected_schema_without_row_marker(
+        self, fake_credential
+    ):
+        """Passing ``mode='insert'`` should auto-stamp ``__rowMarker__``,
+        and ``expected_schema`` should be compared against the table the
+        caller handed in (no marker), not the post-stamp shape."""
+        client = OpenMirrorClient(fake_credential, WS, MIRROR)
+        # Caller's natural schema — no __rowMarker__ since mode auto-stamps.
+        expected = _schema_with(
+            ("id", pa.string(), False),
+            ("name", pa.string(), True),
+        )
+        tbl = pa.table({"id": ["a"], "name": ["alpha"]})
+        with (
+            patch("pyfabric.data.open_mirror.onelake.list_paths", return_value=[]),
+            patch("pyfabric.data.open_mirror.onelake.upload_file") as up,
+        ):
+            client.write_rows(
+                "t", tbl, schema="s", mode="insert", expected_schema=expected
+            )
+        up.assert_called_once()
+
+    def test_schema_compat_runs_against_pre_stamp_arrow_table(self, fake_credential):
+        """Verifies the order of operations directly: ``assert_schema_compat``
+        receives the caller-provided ``expected_schema`` and the
+        caller-provided arrow table's schema (no ``__rowMarker__``).
+
+        This is the contract: even if a future pyarrow makes
+        ``append_column`` produce a NOT NULL field by default, the
+        check must not see it.
+        """
+        client = OpenMirrorClient(fake_credential, WS, MIRROR)
+        expected = _schema_with(
+            ("id", pa.string(), False),
+            ("name", pa.string(), True),
+        )
+        tbl = pa.table({"id": ["a"], "name": ["alpha"]})
+        captured: dict[str, pa.Schema] = {}
+
+        def _spy(old: pa.Schema, new: pa.Schema) -> None:
+            captured["old"] = old
+            captured["new"] = new
+
+        with (
+            patch("pyfabric.data.open_mirror.onelake.list_paths", return_value=[]),
+            patch("pyfabric.data.open_mirror.onelake.upload_file"),
+            patch("pyfabric.data.open_mirror.assert_schema_compat", side_effect=_spy),
+        ):
+            client.write_rows(
+                "t", tbl, schema="s", mode="insert", expected_schema=expected
+            )
+        assert captured["old"] == expected
+        # The schema seen by assert_schema_compat must be the caller's
+        # pre-stamp shape — no __rowMarker__ column.
+        assert "__rowMarker__" not in captured["new"].names
+
+    def test_auto_stamp_mismatch_raises_pre_stamp(self, fake_credential):
+        """Mismatch on the caller-visible columns must still raise —
+        proving the check actually runs (not silently skipped)."""
+        client = OpenMirrorClient(fake_credential, WS, MIRROR)
+        expected = _schema_with(
+            ("id", pa.string(), False),
+            ("posts", pa.int32(), True),
+        )
+        # Type drift on "posts": int32 expected, int64 supplied.
+        tbl = pa.table(
+            {
+                "id": ["a"],
+                "posts": pa.array([1], type=pa.int64()),
+            }
+        )
+        with (
+            patch("pyfabric.data.open_mirror.onelake.upload_file") as up,
+            pytest.raises(OpenMirrorSchemaIncompatible),
+        ):
+            client.write_rows(
+                "t", tbl, schema="s", mode="insert", expected_schema=expected
+            )
+        up.assert_not_called()

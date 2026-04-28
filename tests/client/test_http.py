@@ -129,3 +129,63 @@ class TestFabricClientRequests:
         client = self._make_client(mock_requests_session)
         result = client.post("workspaces", {"displayName": "test"})
         assert result["id"] == "new"
+
+
+class TestPollLroTerminalStatus:
+    """The LRO poller must terminate on every Fabric-emitted success
+    status — not just ``Succeeded``. The Jobs API (used to trigger
+    notebook runs) reports ``Completed`` as its terminal success
+    state; ``Succeeded``-only would loop forever.
+
+    Each non-terminal poll path calls ``time.sleep``; the test patches
+    it to raise so an inadvertent loop fails fast instead of hanging
+    the suite.
+    """
+
+    def _make_client(self, mock_session):
+        client = FabricClient("fake-token")
+        client._session = mock_session
+        return client
+
+    def _poll_response(self, status: str):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = f'{{"status": "{status}"}}'
+        resp.content = resp.text.encode()
+        resp.headers = {}
+        resp.json.return_value = {"status": status}
+        return resp
+
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self):
+        with patch(
+            "pyfabric.client.http.time.sleep",
+            side_effect=AssertionError("LRO poller did not terminate on first reply"),
+        ):
+            yield
+
+    def test_succeeded_terminates(self, mock_requests_session):
+        mock_requests_session.request.return_value = self._poll_response("Succeeded")
+        client = self._make_client(mock_requests_session)
+        body = client._poll_lro("https://example.com/op/1")
+        assert body == {"status": "Succeeded"}
+
+    def test_completed_terminates(self, mock_requests_session):
+        """Jobs API LRO returns ``Completed``; poller must accept it
+        as a terminal success rather than loop."""
+        mock_requests_session.request.return_value = self._poll_response("Completed")
+        client = self._make_client(mock_requests_session)
+        body = client._poll_lro("https://example.com/op/1")
+        assert body == {"status": "Completed"}
+
+    def test_empty_status_terminates(self, mock_requests_session):
+        mock_requests_session.request.return_value = self._poll_response("")
+        client = self._make_client(mock_requests_session)
+        body = client._poll_lro("https://example.com/op/1")
+        assert body == {"status": ""}
+
+    def test_failed_raises(self, mock_requests_session):
+        mock_requests_session.request.return_value = self._poll_response("Failed")
+        client = self._make_client(mock_requests_session)
+        with pytest.raises(FabricError):
+            client._poll_lro("https://example.com/op/1")

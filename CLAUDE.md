@@ -12,7 +12,7 @@ generate and test Fabric item definitions locally.
 
 ## Technical Stack
 
-- **Python**: 3.12+ (use modern syntax: `type X = ...`, `match`, `X | Y` unions)
+- **Python**: 3.11+ (use modern syntax: `match`, `X | Y` unions, `Self` from `typing`). Avoid 3.12-only syntax — Fabric Spark runtime 1.3 is 3.11. Specifically: do NOT use `type X = Y` (PEP 695, 3.12+) or `class Foo[T]` (PEP 695, 3.12+).
 - **Build**: hatchling with hatch-vcs (version from git tags)
 - **Layout**: src-layout (`src/pyfabric/`)
 - **Linting**: ruff (configured in pyproject.toml)
@@ -39,7 +39,7 @@ src/pyfabric/
 - All public functions and classes must have type annotations
 - Use `X | None` not `typing.Optional[X]`; use `X | Y` not `typing.Union`
 - Use `list`, `dict`, `tuple` not `typing.List`, `typing.Dict`, `typing.Tuple`
-- `from __future__ import annotations` is NOT needed (Python 3.12+)
+- `from __future__ import annotations` is NOT needed (Python 3.11+ supports `X | Y` unions natively via PEP 604)
 - Prefer `pathlib.Path` over `os.path`
 - Prefer dataclasses or named tuples over plain dicts for structured data
 - Tests use pytest fixtures; avoid unittest.TestCase
