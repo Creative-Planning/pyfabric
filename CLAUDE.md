@@ -98,6 +98,43 @@ Supported item types: Notebook, Lakehouse, Dataflow, Environment,
 VariableLibrary, SemanticModel, Report, DataPipeline, Warehouse,
 MirroredDatabase, Map.
 
+## Provisioning Workflow (git-first)
+
+pyfabric ships two complementary ways to create Fabric items:
+
+1. **Builder → git artifact** (`NotebookBuilder.save_to_disk()`,
+   `MirroredDatabaseBuilder.save_to_disk()`, etc.) writes a
+   `.platform` + definition files to a folder under your
+   git-synced workspace repo. **This is the primary path.**
+2. **REST helpers** (`create_item`, `create_mirrored_database`, …)
+   call the Fabric REST API directly. **Use only for scripted
+   automation in workspaces that are not git-synced.**
+
+Mixing the two on the same workspace causes a duplicate-item
+conflict: the REST-created item and the later git-synced item live
+under different IDs, and Fabric will not merge them. The
+git-synced item also receives a fresh ID, breaking any committed
+references (e.g. notebook parameters that hard-code the mirror's
+GUID).
+
+### Recommended order for a git-synced workspace
+
+1. Generate the artifact locally with the builder.
+2. Run local tests (producer logic, schema-compat, artifact shape,
+   `validate_workspace`).
+3. Commit + push to the workspace's git-synced branch.
+4. Have a human trigger the **manual git-sync** in the Fabric portal
+   (and bind any required OAuth credentials on first refresh — see
+   `claude_memory/first_refresh_cred_binding.md`).
+5. Only then perform data-plane mutations (upload landing-zone
+   files, `start_mirroring`, `update_definition`, …) — these
+   target the just-synced item by its real GUID.
+
+AI assistants using pyfabric in a git-synced workspace should
+**pause after step 3** and wait for the user to confirm the sync
+before issuing any REST mutation that would create or modify an
+item.
+
 ## What NOT to Do
 
 - Do not add `__version__ = "..."` manually anywhere
