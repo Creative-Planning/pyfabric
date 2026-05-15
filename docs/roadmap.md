@@ -43,6 +43,11 @@ Expand supported Fabric item types:
   pipeline or notebook
 - Wire up event-driven patterns for CI/CD and data pipeline automation
 - Integration with Power Automate flows
+- **Git Integration client** — typed wrappers for the Fabric workspace
+  ↔ git endpoints so post-commit "make Fabric match git" automation is
+  one Python call. Initial surface (`get_status`, `update_from_git`,
+  `sync_workspace`) covers the pull/CI direction; commit-to-git and
+  connection management to follow as use cases surface.
 
 ## Phase 4: LLM-Powered Data Analysis
 
