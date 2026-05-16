@@ -333,9 +333,13 @@ class NotebookBuilder:
     @staticmethod
     def _render_markdown_cell(content: str) -> str:
         lines = content.split("\n")
-        # Blank lines render as bare ``#`` (no trailing space) — matches
-        # Fabric's round-tripped output.
-        prefixed = ["#" if line == "" else f"# {line}" for line in lines]
+        # Blank lines must be rendered as ``# `` (hash + trailing space).
+        # Fabric's git-sync strips bare-``#`` lines on portal save, which
+        # round-trips the file and pollutes git history. The trailing
+        # space survives both Fabric's parser and downstream
+        # trailing-newline / line-ending byte normalizers (which leave
+        # internal whitespace alone).
+        prefixed = ["# " if line == "" else f"# {line}" for line in lines]
         return "# MARKDOWN ********************\n\n" + "\n".join(prefixed) + "\n"
 
     def _render_code_cell(self, code: str, language: CellLanguage) -> str:

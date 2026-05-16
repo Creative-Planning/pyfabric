@@ -93,11 +93,15 @@ class TestMarkdownCell:
         src = nb.to_source_string()
         assert "# MARKDOWN ********************\n\n# Line 1\n# Line 2\n" in src
 
-    def test_blank_line_is_rendered_as_hash_only(self):
+    def test_blank_line_emits_hash_space(self):
         nb = NotebookBuilder().add_markdown("Para one\n\nPara two")
         src = nb.to_source_string()
-        # Fabric emits "# " with trailing space stripped — rendered as "#".
-        assert "# Para one\n#\n# Para two" in src
+        # Blank lines must be "# " (hash + trailing space), not bare "#".
+        # Fabric's git-sync silently strips bare-"#" lines on portal save,
+        # producing spurious "fix" round-trips. The trailing-space form
+        # survives both Fabric's parser and trailing-newline byte
+        # normalizers downstream.
+        assert "# Para one\n# \n# Para two" in src
 
 
 class TestPythonCell:
