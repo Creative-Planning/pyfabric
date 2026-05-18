@@ -25,11 +25,29 @@ repos:
       - id: codespell
         additional_dependencies: [tomli]
         args: [--config=.codespellrc]
+        # Full-repo scan to match CI behavior — CI runs
+        # `codespell --config=.codespellrc` with no positional args, which
+        # codespell defaults to scanning the cwd recursively. Pre-commit's
+        # default is to pass only staged files, which would miss
+        # pre-existing typos in unchanged files and surface them in CI
+        # against unrelated PRs.
+        pass_filenames: false
+        always_run: true
 
   - repo: https://github.com/DavidAnson/markdownlint-cli2
     rev: v0.14.0
     hooks:
       - id: markdownlint-cli2
+        # Full-repo scan to match CI behavior — CI runs
+        # markdownlint-cli2-action which reads .markdownlint-cli2.jsonc's
+        # `globs: ["**/*.md"]` and scans every markdown file in the repo.
+        # Without these settings, pre-commit passes only staged files; the
+        # hook reports `(no files to check) Skipped` when a commit has no
+        # .md changes, missing pre-existing violations in unchanged docs
+        # that the CI job then flags against unrelated PRs. Match the
+        # CI's behavior so violations are caught at commit time.
+        pass_filenames: false
+        always_run: true
 
   - repo: local
     hooks:
