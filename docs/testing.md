@@ -18,7 +18,7 @@ After installing `pyfabric[testing]`, these fixtures are available in all
 your test files automatically:
 
 | Fixture | Type | Description |
-|---------|------|-------------|
+| --------- | ------ | ------------- |
 | `fabric_spark` | `DuckDBSparkSession` | Drop-in SparkSession backed by DuckDB |
 | `mock_notebookutils` | `MockNotebookUtils` | Drop-in for Fabric notebookutils |
 | `lakehouse_root` | `Path` | Temporary directory for lakehouse data |

@@ -146,3 +146,55 @@ class TestPushAllTargetSchema:
             lh.push_all(fake_credential)
         for call in mock_write.call_args_list:
             assert call.kwargs["schema"] == "dbo"
+
+
+class TestPushTableMergeMode:
+    """``push_table(mode="merge", merge_keys=[...])`` forwards the keys
+    through to ``write_table``. End-to-end merge semantics are exercised
+    in tests/data/test_lakehouse.py::TestWriteTableMergeMode; here we
+    just verify the wrapper plumbing is wired correctly.
+    """
+
+    def test_push_table_forwards_merge_keys(self, lh, fake_credential):
+        with patch("pyfabric.data.lakehouse.write_table") as mock_write:
+            mock_write.return_value = MagicMock(row_count=2)
+            lh.push_table(fake_credential, "full_tbl", mode="merge", merge_keys=["id"])
+        assert mock_write.call_count == 1
+        kwargs = mock_write.call_args.kwargs
+        assert kwargs["mode"] == "merge"
+        assert kwargs["merge_keys"] == ["id"]
+
+
+class TestPushAllMergeMode:
+    """``push_all(mode="merge", merge_keys={...})`` requires a per-table
+    key map and forwards each table's keys to push_table individually.
+    """
+
+    def test_push_all_merge_without_keys_dict_raises(self, lh, fake_credential):
+        with pytest.raises(ValueError, match="merge_keys"):
+            lh.push_all(fake_credential, mode="merge")
+
+    def test_push_all_merge_missing_table_keys_raises(self, lh, fake_credential):
+        # Only one of the two tables has keys defined — should refuse to start.
+        with pytest.raises(ValueError, match="missing entries for"):
+            lh.push_all(
+                fake_credential,
+                mode="merge",
+                merge_keys={"full_tbl": ["id"]},  # empty_tbl missing
+            )
+
+    def test_push_all_merge_forwards_per_table_keys(self, lh, fake_credential):
+        with patch("pyfabric.data.lakehouse.write_table") as mock_write:
+            mock_write.return_value = MagicMock(row_count=0)
+            lh.push_all(
+                fake_credential,
+                mode="merge",
+                merge_keys={"empty_tbl": ["id"], "full_tbl": ["id", "name"]},
+            )
+        # empty_tbl: write_table called with merge_keys=["id"] BUT empty source
+        # is short-circuited inside write_table itself (covered in
+        # test_lakehouse.py). push_all just forwards.
+        # full_tbl: write_table called with merge_keys=["id","name"]
+        keys_by_call = [c.kwargs["merge_keys"] for c in mock_write.call_args_list]
+        assert ["id"] in keys_by_call
+        assert ["id", "name"] in keys_by_call

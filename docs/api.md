@@ -9,7 +9,7 @@ This document describes all public modules and functions in pyfabric.
 Authentication and credential management for Microsoft Fabric.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `FabricCredential(tenant=None)` | Unified credential using Azure Identity or az CLI fallback. Caches tokens per scope. |
 | `FabricCredential.get_token(resource)` | Get a bearer token for a resource URL. Normalizes to scope format automatically. |
 | `FabricCredential.fabric_token` | Token for the Fabric REST API. |
@@ -35,7 +35,7 @@ token = cred.fabric_token
 HTTP client for the Fabric REST API v1 with retry, pagination, and LRO polling.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `FabricClient(credential=None, *, base_url=None, timeout=None)` | HTTP client. Accepts FabricCredential, token string, or None (creates default). Optional `base_url` and `timeout` for testing. |
 | `FabricClient.raw_request(method, url, body)` | Low-level HTTP request for custom polling patterns. Returns raw `requests.Response`. |
 | `FabricClient.get(path, params)` | GET a single resource. |
@@ -62,7 +62,7 @@ test_client = FabricClient(cred, base_url="http://localhost:8000/v1", timeout=5)
 Client for the Fabric Graph Model REST API.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `GraphClient(client, workspace_id)` | Wrapper for graph model operations. |
 | `GraphClient.list_graph_models()` | List all graph models in the workspace. |
 | `GraphClient.get_definition_decoded(graph_id)` | Get definition with base64 payloads decoded. |
@@ -74,7 +74,7 @@ Client for the Fabric Graph Model REST API.
 Client for the Fabric Livy API (Spark SQL execution).
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `LivyClient(credential, workspace_id, lakehouse_id)` | Spark session client. Supports context manager protocol. |
 | `LivyClient.create_session()` | Create a new Spark session and wait for idle state. |
 | `LivyClient.sql(statement)` | Execute a Spark SQL statement. |
@@ -104,7 +104,7 @@ from pyfabric.client.ontology import OntologyBuilder, create_ontology
 #### pyfabric.client.ontology.crud
 
 | Function | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `list_ontologies(client, ws_id)` | List all ontologies in a workspace. |
 | `get_ontology(client, ws_id, ontology_id)` | Get a single ontology. |
 | `create_ontology(client, ws_id, display_name)` | Create an ontology via REST API. |
@@ -115,7 +115,7 @@ from pyfabric.client.ontology import OntologyBuilder, create_ontology
 #### pyfabric.client.ontology.builder
 
 | Class | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `OntologyBuilder()` | High-level builder for ontology definitions. |
 | `OntologyBuilder.add_entity_type(name, properties)` | Add an entity type. Returns entity type ID. |
 | `OntologyBuilder.add_data_binding(entity_type_id, ...)` | Bind entity properties to a lakehouse table. |
@@ -134,7 +134,7 @@ Low-level definition parts manipulation. Operates on lists of `{path, content}`
 dicts decoded from the API format.
 
 | Function | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `decode_definition(raw)` | Decode an API definition response. |
 | `encode_definition(parts)` | Encode parts back to API format. |
 | `make_property(name, value_type)` | Build a property dict. |
@@ -153,7 +153,7 @@ dicts decoded from the API format.
 Synchronize ontology entity types to Lakehouse tables and data bindings.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `sync_all_entities(client, ws_id, ontology_id, livy, lh_id, *, entity_ids=None, table_map=None)` | Sync all (or specified) entities to tables and bindings in one round trip. |
 | `sync_entity_to_lakehouse(client, ws_id, ontology_id, entity_type_id, livy, lh_id, table_name)` | Sync a single entity type. |
 
@@ -166,7 +166,7 @@ Synchronize ontology entity types to Lakehouse tables and data bindings.
 Item type definitions and `.platform` file parsing.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `ITEM_TYPES` | Dict mapping type names to `ItemType` definitions. Registered types: Notebook, Lakehouse, Dataflow, Environment, VariableLibrary, SemanticModel, Report, DataPipeline, Warehouse, MirroredDatabase, Ontology, Map. |
 | `ItemType` | Dataclass with `type_name`, `required_files`, `optional_files`, `alt_required_files`. `alt_required_files` lists alternative file sets (OR-of-ANDs) for types with multiple valid formats. |
 | `parse_platform(content)` | Parse a `.platform` JSON file. Returns `PlatformFile` with metadata and config. |
@@ -177,7 +177,7 @@ Item type definitions and `.platform` file parsing.
 Validate Fabric item directory structures before git-syncing.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `validate_item(item_dir)` | Validate a single item directory. Returns `ValidationResult`. |
 | `validate_workspace(workspace_dir)` | Validate all items in a workspace directory. Returns list of results. |
 | `ValidationResult` | Contains `valid` (bool), `errors`, `warnings`, `item_type`, `item_path`. |
@@ -200,7 +200,7 @@ if not result.valid:
 Build and manage Fabric item definitions in git-sync format.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `ArtifactBundle(item_type, display_name, parts)` | A complete Fabric item definition. |
 | `save_to_disk(bundle, output_dir)` | Write artifact in git-sync directory format. |
 | `load_from_disk(artifact_dir)` | Read a git-sync artifact directory into a bundle. |
@@ -212,7 +212,7 @@ Build and manage Fabric item definitions in git-sync format.
 CRUD operations for Fabric workspace items via REST API.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `list_items(client, workspace_id, item_type=None)` | List all items in a workspace. |
 | `get_item(client, workspace_id, item_id)` | Get a single item. |
 | `create_item(client, workspace_id, display_name, item_type)` | Create a workspace item. |
@@ -230,7 +230,7 @@ CRUD operations for Fabric workspace items via REST API.
 OneLake DFS (Data Lake Storage Gen2) helpers.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `abfss_url(ws_id, item_id, path)` | Build an `abfss://` URL for Delta lake access. |
 | `list_paths(token, ws_id, item_id, path)` | List paths using the DFS filesystem API. |
 | `list_files(token, ws_id, item_id, path)` | List non-directory entries, optionally filtered by suffix. |
@@ -243,7 +243,7 @@ OneLake DFS (Data Lake Storage Gen2) helpers.
 SQL analytics endpoint client for Fabric lakehouses and warehouses.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `FabricSql(server, database, credential)` | SQL connection using pyodbc with AAD tokens. |
 | `FabricSql.query_df(sql, params)` | Execute SELECT and return a pandas DataFrame. |
 | `FabricSql.execute(sql, params)` | Execute DDL/DML. Returns affected row count. |
@@ -257,7 +257,7 @@ SQL analytics endpoint client for Fabric lakehouses and warehouses.
 High-level lakehouse table operations with SQL-first reads and DFS Delta writes.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `write_table(credential, ws_id, lh_id, table_name, data)` | Write a DataFrame as a Delta table. |
 | `read_table(credential, ws_id, lh_id, table_name)` | Read a table (SQL first, DFS fallback). |
 | `WriteResult` | Result dataclass with table_path, row_count, mode, dry_run. |
@@ -271,7 +271,7 @@ High-level lakehouse table operations with SQL-first reads and DFS Delta writes.
 CRUD operations for Fabric workspaces.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `list_workspaces(client)` | List all accessible workspaces. |
 | `get_workspace(client, workspace_id)` | Get a single workspace. |
 | `create_workspace(client, display_name)` | Create a new workspace. |
@@ -289,7 +289,7 @@ CRUD operations for Fabric workspaces.
 DuckDB-backed Spark session mock for local notebook testing.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `DuckDBSparkSession(lakehouse_root=None)` | Drop-in SparkSession replacement. |
 | `DuckDBSparkSession.sql(query)` | Execute SQL with automatic Delta table rewriting. |
 | `DuckDBSparkSession.catalog.listTables(dbName)` | List Delta tables in a lakehouse directory. |
@@ -302,7 +302,7 @@ DuckDB-backed Spark session mock for local notebook testing.
 Mock for Fabric notebookutils / mssparkutils.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `MockNotebookUtils(root=None)` | Drop-in notebookutils replacement. |
 | `.fs.ls(path)` | List files at path. |
 | `.fs.mkdirs(path)` | Create directories. |
@@ -319,7 +319,7 @@ Mock for Fabric notebookutils / mssparkutils.
 Pytest fixtures auto-registered via plugin entry point.
 
 | Fixture | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `fabric_spark` | DuckDBSparkSession with a temporary lakehouse root. |
 | `mock_notebookutils` | MockNotebookUtils with a temporary filesystem root. |
 | `lakehouse_root` | Path to the temporary lakehouse directory. |
@@ -329,7 +329,7 @@ Pytest fixtures auto-registered via plugin entry point.
 AI-powered test and log analysis (placeholder for future Ollama integration).
 
 | Function | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `analyze_test_report(report_path, model)` | Analyze pytest JSON report with local LLM. (Not yet implemented.) |
 | `analyze_log_file(log_path, model)` | Analyze structlog JSON log file with local LLM. (Not yet implemented.) |
 
@@ -340,7 +340,7 @@ AI-powered test and log analysis (placeholder for future Ollama integration).
 Dual-output logging using structlog: console (terse) and JSON Lines file (verbose).
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `setup_logging(script_name, verbose=False)` | Configure structured logging. Returns the log file path. |
 | `get_log_path(script_name)` | Return the log file path for a script. |
 | `mask_tokens_processor(logger, method_name, event_dict)` | Structlog processor that redacts JWT tokens. |
@@ -351,7 +351,7 @@ Dual-output logging using structlog: console (terse) and JSON Lines file (verbos
 Standard CLI argument parsing and script execution wrapper.
 
 | Function / Class | Description |
-|-----------------|-------------|
+| ----------------- | ------------- |
 | `add_standard_args(parser, project)` | Add `--env`, `--dry-run`, `--tenant`, `--verbose` to argparse. |
 | `run_main(fn, parser)` | Parse args, set up logging, run function, handle errors. |
 | `register_env(project, env_name, config)` | Register an environment config. |
