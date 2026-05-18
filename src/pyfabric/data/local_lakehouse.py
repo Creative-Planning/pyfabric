@@ -428,6 +428,7 @@ class LocalLakehouse:
         table_name: str,
         *,
         mode: str = "overwrite",
+        merge_keys: list[str] | None = None,
         skip_empty: bool = False,
         target_schema: str | None = None,
     ) -> int:
@@ -441,14 +442,25 @@ class LocalLakehouse:
         Args:
             credential: FabricCredential for storage token.
             table_name: Table name (without schema prefix).
-            mode:       "overwrite" or "append".
+            mode:       ``"overwrite"``, ``"append"``, or ``"merge"``.
+                ``merge`` upserts by ``merge_keys`` — matching rows are
+                updated, new source rows are inserted, and destination
+                rows whose keys aren't in the source are left untouched.
+                Use this when the local DuckDB holds a partial slice of
+                the destination table (e.g. one year of data) and the
+                rest must be preserved.
+            merge_keys: Required when ``mode="merge"``. Column names that
+                form the merge predicate (joined with AND). Must be
+                present in both source and destination schemas.
             skip_empty: If True, skip the write when the table has 0 rows
                 and return 0. Defaults to False because DirectLake
                 semantic models bind to ``abfss://.../Tables/<schema>/<table>``
                 and fail refresh with "source tables either do not exist
                 or access was denied" when the delta log is missing —
                 zero-row deltas are valid and DirectLake-compatible, so
-                writing them is the safer default.
+                writing them is the safer default. Note that an empty
+                source under ``mode="merge"`` is always a no-op (an empty
+                merge would be a wasted Delta version commit).
             target_schema: Override the destination lakehouse schema.
                 Defaults to ``self.schema``. Useful when one local
                 DuckDB file holds multiple medallion layers
@@ -494,6 +506,7 @@ class LocalLakehouse:
             arrow_table,
             schema=effective_target,
             mode=mode,
+            merge_keys=merge_keys,
             source="LocalLakehouse.push_table",
         )
         return result.row_count
@@ -503,6 +516,7 @@ class LocalLakehouse:
         credential: FabricCredential,
         *,
         mode: str = "overwrite",
+        merge_keys: dict[str, list[str]] | None = None,
         tables: list[str] | None = None,
         skip_empty: bool = False,
         target_schema: str | None = None,
@@ -511,7 +525,14 @@ class LocalLakehouse:
 
         Args:
             credential: FabricCredential for storage token.
-            mode:       "overwrite" or "append".
+            mode:       ``"overwrite"``, ``"append"``, or ``"merge"``. When
+                        ``"merge"``, ``merge_keys`` must supply a key list
+                        for every table being pushed.
+            merge_keys: Required when ``mode="merge"``. Maps table_name →
+                        list of column names that form the merge predicate
+                        for that table. Each table needs its own keys
+                        since primary-key columns vary across tables.
+                        Tables not in the dict raise ``ValueError``.
             tables:     Optional list of table names to push. If None,
                         pushes all tables in the local schema.
             skip_empty: If True, skip tables with 0 rows. Defaults to
@@ -528,7 +549,21 @@ class LocalLakehouse:
             Dict of {table_name: rows_written}. Skipped-empty tables
             are absent; failed pushes map to -1.
         """
+        if mode == "merge" and not merge_keys:
+            raise ValueError(
+                "mode='merge' requires merge_keys (dict of table_name → "
+                "list of merge-key columns). push_all can't infer keys."
+            )
         target_tables = tables or self.table_names()
+
+        if mode == "merge":
+            missing = [t for t in target_tables if t not in (merge_keys or {})]
+            if missing:
+                raise ValueError(
+                    "mode='merge' requires merge_keys for every pushed "
+                    f"table; missing entries for: {missing}"
+                )
+
         results = {}
 
         for name in target_tables:
@@ -541,6 +576,7 @@ class LocalLakehouse:
                     credential,
                     name,
                     mode=mode,
+                    merge_keys=(merge_keys or {}).get(name),
                     skip_empty=skip_empty,
                     target_schema=target_schema,
                 )

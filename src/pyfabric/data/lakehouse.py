@@ -78,6 +78,7 @@ def write_table(
     *,
     schema: str = "dbo",
     mode: str = "overwrite",
+    merge_keys: list[str] | None = None,
     dry_run: bool = False,
     source: str | None = None,
 ) -> WriteResult:
@@ -94,16 +95,31 @@ def write_table(
         table_name:  Table name (without schema prefix).
         data:        pandas DataFrame or PyArrow Table.
         schema:      Schema name (default "dbo" for schema-enabled lakehouses).
-        mode:        "overwrite" or "append".
+        mode:        ``"overwrite"``, ``"append"``, or ``"merge"``.
+                     - ``overwrite`` replaces the entire destination table.
+                     - ``append`` adds rows; duplicates are allowed.
+                     - ``merge`` upserts by ``merge_keys``: matching rows are
+                       updated, non-matching source rows are inserted, and
+                       destination rows whose keys are NOT in the source are
+                       left untouched. Empty source is a no-op. If the
+                       destination table doesn't exist yet, merge falls
+                       through to overwrite-create.
+        merge_keys:  Required when ``mode="merge"``. Column names that form
+                     the merge predicate (joined with AND). Must be present
+                     in both source and destination schemas.
         dry_run:     If True, validate but do not write.
         source:      Optional source lineage string.
 
     Returns:
         WriteResult with metadata about the write.
+
+    Raises:
+        ValueError: When ``mode`` is not one of the supported values, or
+                    when ``mode="merge"`` is requested without ``merge_keys``.
     """
     try:
         import pyarrow as pa_mod
-        from deltalake import CommitProperties, write_deltalake
+        from deltalake import CommitProperties, DeltaTable, write_deltalake
     except ImportError:
         raise RuntimeError(
             "write_table needs deltalake + pyarrow. Install them with "
@@ -146,8 +162,35 @@ def write_table(
     if row_count == 0:
         log.warning("Data is empty (0 rows) - nothing to write")
 
-    if mode not in ("overwrite", "append"):
-        raise ValueError(f"Invalid mode '{mode}'. Use 'overwrite' or 'append'.")
+    if mode not in ("overwrite", "append", "merge"):
+        raise ValueError(
+            f"Invalid mode '{mode}'. Use 'overwrite', 'append', or 'merge'."
+        )
+
+    if mode == "merge" and not merge_keys:
+        raise ValueError(
+            "mode='merge' requires merge_keys (a non-empty list of column "
+            "names that form the merge predicate). Without keys we'd have "
+            "no way to decide which destination rows to update vs. preserve."
+        )
+
+    # Empty-source merge is a no-op — Delta MERGE on no rows would still
+    # commit a no-op transaction and bump the table version unnecessarily.
+    # For overwrite/append the existing path handles 0-row writes (only
+    # logs a warning), so we only short-circuit merge here.
+    if mode == "merge" and row_count == 0:
+        log.info(
+            "Skipping merge: source has 0 rows (no-op) for %s.%s",
+            schema,
+            table_name,
+        )
+        return WriteResult(
+            table_path=table_path,
+            row_count=0,
+            column_count=col_count,
+            mode=mode,
+            dry_run=False,
+        )
 
     # Naive (tz-less) timestamp columns become Delta TIMESTAMP_NTZ, which the
     # Fabric SQL analytics endpoint rejects with "Columns of the specified
@@ -205,14 +248,49 @@ def write_table(
     }
 
     log.info("Writing %d rows to %s.%s (mode=%s)", row_count, schema, table_name, mode)
-    write_deltalake(
-        target,
-        arrow_table,
-        mode=mode,
-        schema_mode="overwrite" if mode == "overwrite" else "merge",
-        storage_options=storage_options,
-        commit_properties=CommitProperties(custom_metadata=commit_properties),
-    )
+    if mode == "merge":
+        # First-write fall-through: if the Delta table doesn't exist yet,
+        # there's nothing to merge into — fall back to overwrite-create so
+        # the caller doesn't have to special-case empty destinations.
+        table_exists = DeltaTable.is_deltatable(target, storage_options=storage_options)
+        if not table_exists:
+            log.info(
+                "Merge target %s.%s does not exist yet; falling through to "
+                "overwrite-create",
+                schema,
+                table_name,
+            )
+            write_deltalake(
+                target,
+                arrow_table,
+                mode="overwrite",
+                schema_mode="overwrite",
+                storage_options=storage_options,
+                commit_properties=CommitProperties(custom_metadata=commit_properties),
+            )
+        else:
+            # Build the predicate: t.k1 = s.k1 AND t.k2 = s.k2 ...
+            # Column names get back-tick quoted to survive identifiers
+            # that happen to be SQL keywords or contain non-ascii chars.
+            predicate = " AND ".join(f"t.`{k}` = s.`{k}`" for k in merge_keys or [])
+            log.debug("Merge predicate: %s", predicate)
+            dt = DeltaTable(target, storage_options=storage_options)
+            dt.merge(
+                source=arrow_table,
+                predicate=predicate,
+                source_alias="s",
+                target_alias="t",
+                commit_properties=CommitProperties(custom_metadata=commit_properties),
+            ).when_matched_update_all().when_not_matched_insert_all().execute()
+    else:
+        write_deltalake(
+            target,
+            arrow_table,
+            mode=mode,
+            schema_mode="overwrite" if mode == "overwrite" else "merge",
+            storage_options=storage_options,
+            commit_properties=CommitProperties(custom_metadata=commit_properties),
+        )
     log.info("Write complete: %s.%s", schema, table_name)
 
     return WriteResult(
