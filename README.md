@@ -118,7 +118,7 @@ def test_my_notebook(fabric_spark, mock_notebookutils):
 ## Documentation
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | [Vision](docs/vision.md) | Project mission and design principles |
 | [Roadmap](docs/roadmap.md) | Implementation phases and current status |
 | [API Reference](docs/api.md) | All sub-packages and their public functions |
@@ -130,7 +130,7 @@ def test_my_notebook(fabric_spark, mock_notebookutils):
 ## Sub-packages
 
 | Package | Purpose | Install |
-|---------|---------|---------|
+| --------- | --------- | --------- |
 | `pyfabric.client` | Fabric REST API authentication and HTTP client | `pyfabric[azure]` |
 | `pyfabric.items` | Create, validate, and manage Fabric item definitions | (included) |
 | `pyfabric.data` | OneLake, SQL endpoint, and lakehouse table operations | `pyfabric[data]` |

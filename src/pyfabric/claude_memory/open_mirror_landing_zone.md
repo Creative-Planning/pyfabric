@@ -66,7 +66,7 @@ Without `_metadata.json`, updates and deletes silently don't work.
 Values:
 
 | Value | Meaning | Required columns |
-|---|---|---|
+| --- | --- | --- |
 | 0 | Insert | full row |
 | 1 | Update | full row |
 | 2 | Delete | key columns only |
@@ -87,7 +87,7 @@ Delta schema within ~30s; old rows show NULL for the new column.
 replication on that table):**
 
 | Don't | Why |
-|---|---|
+| --- | --- |
 | Change a column's type (`int32 → int64`, `date32 → timestamp`) | Mirror rewriter rejects merges. |
 | Move a column past `__rowMarker__` | Marker must remain last. |
 | Add a column declared NOT NULL | Existing rows can't satisfy it. |
@@ -164,7 +164,7 @@ For recovery, use Delta time-travel on the mirrored table
 6. Visibility — observed end-to-end latency from a healthy mirror:
 
    | Stage | Typical latency |
-   |---|---|
+   | --- | --- |
    | Upload file to landing zone | < 5 seconds |
    | Landing zone → mirror sync cycle | 2 – 10 min (periodic; not manually triggerable) |
    | Sync → SQL endpoint visible | 1 – 3 min |

@@ -9,7 +9,7 @@ Built the core library scaffold, ported fabric-libs, added validation,
 testing, documentation, and refactored for maintainability.
 
 | Step | Description | PR |
-|------|------------|----|
+| ------ | ------------ | ---- |
 | 1 | Library scaffold — project structure, CI/CD, supply chain security | #1 |
 | 2 | Port fabric-libs into pyfabric sub-package structure | #4 |
 | 3 | Fabric item type definitions + structure validation (TDD) | #5 |

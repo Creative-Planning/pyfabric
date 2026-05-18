@@ -33,7 +33,7 @@ pre-commit install --hook-type pre-push
 The pre-commit hooks run automatically:
 
 | Hook | Runs on | What it does |
-|------|---------|--------------|
+| ------ | --------- | -------------- |
 | `ruff check` | `git commit` | Lint with auto-fix |
 | `ruff format` | `git commit` | Format check |
 | `mypy` | `git commit` | Type checking |
