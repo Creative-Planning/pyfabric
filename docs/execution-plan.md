@@ -42,15 +42,23 @@ Done-when: all five close, CI green, no new bypasses of `write_artifact_file` in
 Parallel with A. Different module, different reviewers, independent
 test surface.
 
-| Issue | Outcome |
-| ----- | ------- |
-| [#73](https://github.com/Creative-Planning/pyfabric/issues/73) | `NotebookBuilder.attach_environment()` plus emission of `notebook-settings.json`. Removes the need for consumers to hand-author the settings file that gates `Resources/` git-sync inclusion. |
-| [#74](https://github.com/Creative-Planning/pyfabric/issues/74) | `EnvironmentBuilder` + REST lifecycle (`publish`, `get_status`, `wait_for_published`). Replaces the hand-maintained Environment artifact pattern with a builder + driver. |
-| [#78](https://github.com/Creative-Planning/pyfabric/issues/78) | `NotebookBuilder.add_parameters_cell()` (or `parameters=True` kwarg). Required input for any deployment story that parameterizes notebook execution across environments. |
+**Status:** like Phase A, the bulk of Phase B was already in `main`
+before this plan was written and the issues just weren't auto-closed.
+PR #79 shipped `attach_environment` + `notebook-settings.json` (#73).
+PR #80 shipped the `EnvironmentBuilder` + REST lifecycle (#74). PR #94
+adds `add_parameters_cell` (#78) plus the first live REST-based E2E
+test pattern (`PYFABRIC_TEST_WORKSPACE_ID`-gated round-trip against a
+validation workspace) that the rest of the codebase can build on.
+
+| Issue | Status | Outcome |
+| ----- | ------ | ------- |
+| [#78](https://github.com/Creative-Planning/pyfabric/issues/78) | **Done** (PR #94) | `NotebookBuilder.add_parameters_cell(code)` emits `# PARAMETERS CELL ********************`. Live round-trip test against a validation workspace confirms the marker survives Fabric's canonicalization. |
+| [#73](https://github.com/Creative-Planning/pyfabric/issues/73) | **Done** (PR #79) | `NotebookBuilder.attach_environment(env_id, ws_id=None)` emits the dependencies.environment block; `save_to_disk` / `to_bundle` emit `notebook-settings.json` unconditionally. |
+| [#74](https://github.com/Creative-Planning/pyfabric/issues/74) | **Done** (PR #80) | `EnvironmentBuilder` (runtime/compute/pip) + `publish_environment` / `get_environment_status` / `wait_for_published`. Sparkcompute.yml CRLF + trailing-CRLF and environment.yml LF + no-trailing-newline rules live in `normalize._RULES`. |
 
 Done-when: a downstream consumer can describe a Notebook + Environment
 pair entirely through builders, with no hand-written
-`notebook-settings.json` / `fs-settings.json` / `Environment.platform`.
+`notebook-settings.json` / `fs-settings.json` / `Environment.platform`. ✓
 
 ## Phase C — fabric-cicd interoperability
 
