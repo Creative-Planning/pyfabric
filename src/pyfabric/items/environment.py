@@ -314,20 +314,30 @@ def publish_environment(
 def get_environment_status(
     client: _ClientLike, workspace_id: str, environment_id: str
 ) -> dict[str, Any]:
-    """Return the Environment's publish status.
+    """Return the Environment's record (publish status included after publish).
 
     Body shape (Fabric API v1)::
 
         {
           "id": "...",
+          "type": "Environment",
           "displayName": "...",
-          ...,
-          "publishDetails": {
+          "description": "...",
+          "workspaceId": "...",
+          "properties": {...},
+          "attributes": [...],
+          "publishDetails": {                # only after publish_environment
             "state": "Running" | "Success" | "Published" | "Failed" | "Cancelled",
             "targetVersion": "...",
             ...
           }
         }
+
+    ``publishDetails`` is **absent** for a freshly-created Environment
+    that has never been published; verified live 2026-05-27 against
+    Fabric API v1. :func:`wait_for_published` correctly handles its
+    absence (the missing field is treated as in-progress, so polling
+    continues until the publish operation populates it).
     """
     return client.get(_env_path(workspace_id, environment_id))
 
