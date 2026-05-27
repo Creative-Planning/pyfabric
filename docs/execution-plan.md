@@ -27,15 +27,21 @@ explicit dependency chain. Update as issues land or new ones are filed.
 
 Land first. Each is small surface, high return.
 
-| Issue | Symptom | Fix shape |
-| ----- | ------- | --------- |
-| [#66](https://github.com/Creative-Planning/pyfabric/issues/66) | `run_notebook._poll_lro` loops forever because the Jobs API returns `Completed` not `Succeeded` | Treat both as terminal-success in the polling state machine; add a regression test against a mocked Jobs response. |
-| [#67](https://github.com/Creative-Planning/pyfabric/issues/67) | `write_rows(expected_schema=...)` always fails on auto-stamped tables — schema check runs after `__rowMarker__` is appended | Move the schema check to before the marker append, or include the marker column in the expected schema when present. |
-| [#69](https://github.com/Creative-Planning/pyfabric/issues/69) | `LocalLakehouse.evolve_schema` requires `TableDef.column(name)` — duck-type clients can't use it | Replace `TableDef`-specific method calls with attribute/dict access that any matching shape can satisfy. |
-| [#64](https://github.com/Creative-Planning/pyfabric/issues/64) | `decode_part` API pairing with `encode_part` is confusing; wrong input raises an unhelpful `TypeError` | Clearer signature, type-check at the boundary, error message that names both the expected shape and the received one. |
-| [#91](https://github.com/Creative-Planning/pyfabric/issues/91) | `ArtifactBundle.save_to_disk()` and the writers in `src/pyfabric/items/bundle.py` still call `Path.write_text` / `Path.write_bytes` directly instead of `write_artifact_file`. Notebook, SemanticModel, Report, and Environment builders all migrated; bundle.py is the last bypass and represents a re-introduction risk for the byte-flap class of bug normalization was built to prevent. | Migrate every direct write in `bundle.py` (lines 102, 111, 113) to `pyfabric.items.normalize.write_artifact_file`. Add a unit test that loads a bundle, saves it, and asserts every emitted file passes `is_canonical`. |
+**Status:** four of the five Phase A items (#64, #66, #67, #69) were
+already resolved by PR #76 ("small fixes", merged 2026-04-28) and just
+hadn't been auto-closed. Verified on `main` at PR-92 merge: targeted
+test subset is 66 passed in 3.42s; the four issues are closing with
+references back to PR #76. Only #91 remains.
 
-Done-when: all five close, CI green, no new bypasses of `write_artifact_file` in `src/`.
+| Issue | Status | Symptom | Fix shape |
+| ----- | ------ | ------- | --------- |
+| [#91](https://github.com/Creative-Planning/pyfabric/issues/91) | **Open** | `ArtifactBundle.save_to_disk()` and the writers in `src/pyfabric/items/bundle.py` still call `Path.write_text` / `Path.write_bytes` directly instead of `write_artifact_file`. Notebook, SemanticModel, Report, and Environment builders all migrated; bundle.py is the last bypass and represents a re-introduction risk for the byte-flap class of bug normalization was built to prevent. | Migrate every direct write in `bundle.py` (lines 102, 111, 113) to `pyfabric.items.normalize.write_artifact_file`. Add a unit test that loads a bundle, saves it, and asserts every emitted file passes `is_canonical`. |
+| [#66](https://github.com/Creative-Planning/pyfabric/issues/66) | **Done** (PR #76) | `run_notebook._poll_lro` looped forever because the Jobs API returns `Completed` not `Succeeded` | `src/pyfabric/client/http.py:160` accepts both terminal states. |
+| [#67](https://github.com/Creative-Planning/pyfabric/issues/67) | **Done** (PR #76) | `write_rows(expected_schema=...)` failed on auto-stamped tables — schema check ran after `__rowMarker__` was appended | `src/pyfabric/data/open_mirror.py:479` runs `assert_schema_compat` pre-stamp. |
+| [#69](https://github.com/Creative-Planning/pyfabric/issues/69) | **Done** (PR #76) | `LocalLakehouse.evolve_schema` required `TableDef.column(name)` method access | Implementation iterates `table.columns` and uses `.name` attribute access. |
+| [#64](https://github.com/Creative-Planning/pyfabric/issues/64) | **Done** (PR #76) | `decode_part` API pairing with `encode_part` was confusing; wrong input raised unhelpful `TypeError` | `src/pyfabric/items/crud.py:210` guards with a clear error message naming the right call shape. |
+
+Done-when: #91 closes, CI green, no new bypasses of `write_artifact_file` in `src/`.
 
 ## Phase B — Notebook + Environment authoring
 
