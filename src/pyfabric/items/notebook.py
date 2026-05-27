@@ -74,6 +74,7 @@ class _Cell:
     kind: Literal["markdown", "code"]
     content: str
     language: CellLanguage | None = None  # code-only
+    parameters: bool = False  # code-only; emits PARAMETERS CELL marker
 
 
 _SAME_WORKSPACE_ID = "00000000-0000-0000-0000-000000000000"
@@ -171,6 +172,23 @@ class NotebookBuilder:
     def add_python(self, code: str) -> "NotebookBuilder":
         """Append a Python code cell."""
         self._cells.append(_Cell(kind="code", content=code, language="python"))
+        return self
+
+    def add_parameters_cell(self, code: str) -> "NotebookBuilder":
+        """Append a Python parameters cell.
+
+        Emits ``# PARAMETERS CELL ********************`` instead of the
+        regular ``# CELL`` marker. The trailing METADATA block is
+        identical to a normal Python cell.
+
+        A parameters cell is the injection target for the Jobs API
+        ``executionData.parameters`` field — values passed to
+        ``runOnDemand`` overwrite the matching variable assignments
+        in this cell at runtime.
+        """
+        self._cells.append(
+            _Cell(kind="code", content=code, language="python", parameters=True)
+        )
         return self
 
     def pip_install_from_resources(self, wheel_name: str) -> "NotebookBuilder":
@@ -328,7 +346,9 @@ class NotebookBuilder:
     def _render_cell(self, cell: _Cell) -> str:
         if cell.kind == "markdown":
             return self._render_markdown_cell(cell.content)
-        return self._render_code_cell(cell.content, cell.language or "python")
+        return self._render_code_cell(
+            cell.content, cell.language or "python", parameters=cell.parameters
+        )
 
     @staticmethod
     def _render_markdown_cell(content: str) -> str:
@@ -342,7 +362,9 @@ class NotebookBuilder:
         prefixed = ["# " if line == "" else f"# {line}" for line in lines]
         return "# MARKDOWN ********************\n\n" + "\n".join(prefixed) + "\n"
 
-    def _render_code_cell(self, code: str, language: CellLanguage) -> str:
+    def _render_code_cell(
+        self, code: str, language: CellLanguage, *, parameters: bool = False
+    ) -> str:
         meta_body = json.dumps(
             {
                 "language": language,
@@ -350,11 +372,13 @@ class NotebookBuilder:
             },
             indent=2,
         )
+        marker = (
+            "# PARAMETERS CELL ********************"
+            if parameters
+            else "# CELL ********************"
+        )
         return (
-            "# CELL ********************\n\n"
-            + code.rstrip("\n")
-            + "\n\n"
-            + self._meta_block(meta_body)
+            marker + "\n\n" + code.rstrip("\n") + "\n\n" + self._meta_block(meta_body)
         )
 
     @staticmethod
