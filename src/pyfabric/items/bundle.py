@@ -35,6 +35,7 @@ from typing import Any
 import structlog
 
 from pyfabric.items.crud import encode_part
+from pyfabric.items.normalize import write_artifact_file
 
 log = structlog.get_logger()
 
@@ -97,20 +98,16 @@ def save_to_disk(bundle: ArtifactBundle, output_dir: str | Path) -> Path:
     artifact_dir = output_dir / bundle.dir_name
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write .platform
+    # Every write routes through write_artifact_file so the emitted bytes
+    # match Fabric's canonical form (LF, no BOM, per-file-type trailing
+    # newline). Binary parts fall through canonical_bytes unchanged.
     platform_path = artifact_dir / ".platform"
-    platform_path.write_text(bundle.platform_json(), encoding="utf-8")
+    write_artifact_file(platform_path, bundle.platform_json())
     log.debug("Wrote %s", platform_path)
 
-    # Write definition parts
     for rel_path, content in bundle.parts.items():
         part_path = artifact_dir / rel_path
-        part_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if isinstance(content, bytes):
-            part_path.write_bytes(content)
-        else:
-            part_path.write_text(content, encoding="utf-8")
+        write_artifact_file(part_path, content)
         log.debug("Wrote %s", part_path)
 
     log.info("Saved artifact: %s", artifact_dir)
