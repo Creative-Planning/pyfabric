@@ -126,6 +126,57 @@ class TestPipInstallFromResources:
         assert '%pip install "builtin/my_pkg-1.0.0-py3-none-any.whl" --quiet' in src
 
 
+class TestParametersCell:
+    """``add_parameters_cell`` emits the Fabric parameters-cell marker.
+
+    The Jobs API ``runOnDemand`` ``executionData.parameters`` payload is
+    injected by Fabric into the cell tagged with this marker, overwriting
+    matching variable assignments at runtime.
+    """
+
+    def test_emits_parameters_cell_marker(self):
+        nb = NotebookBuilder().add_parameters_cell('BATCH_FILE = "default.csv"')
+        src = nb.to_source_string()
+        assert "# PARAMETERS CELL ********************" in src
+
+    def test_parameters_cell_does_not_emit_regular_cell_marker(self):
+        # When a notebook contains ONLY a parameters cell, the regular
+        # cell marker must not appear anywhere.
+        nb = NotebookBuilder().add_parameters_cell('BATCH = "x"')
+        src = nb.to_source_string()
+        assert "# CELL ********************" not in src
+
+    def test_parameters_cell_keeps_standard_metadata_block(self):
+        nb = NotebookBuilder().add_parameters_cell('BATCH = "x"')
+        src = nb.to_source_string()
+        # The trailing METADATA block is identical to a regular Python cell.
+        assert '"language": "python"' in src
+        assert '"language_group": "synapse_pyspark"' in src
+
+    def test_mixed_cells_use_correct_markers(self):
+        nb = (
+            NotebookBuilder()
+            .add_parameters_cell('BATCH = "x"')
+            .add_python("print(BATCH)")
+        )
+        src = nb.to_source_string()
+        assert "# PARAMETERS CELL ********************" in src
+        assert "# CELL ********************" in src
+        # Parameters marker must come first since add_parameters_cell was
+        # called first.
+        assert src.index("# PARAMETERS CELL") < src.index("# CELL")
+
+    def test_add_parameters_cell_returns_builder_for_chaining(self):
+        nb = NotebookBuilder().add_parameters_cell("X = 1").add_python("pass")
+        assert isinstance(nb, NotebookBuilder)
+
+    def test_parameters_cell_content_is_preserved_verbatim(self):
+        code = 'BATCH = "x"\nLIMIT = 100'
+        nb = NotebookBuilder().add_parameters_cell(code)
+        src = nb.to_source_string()
+        assert code in src
+
+
 # ── attach_lakehouse ────────────────────────────────────────────────────────
 
 

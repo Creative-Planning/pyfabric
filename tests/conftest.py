@@ -215,3 +215,15 @@ def real_workspace() -> Path | None:
         if p.is_dir():
             return p
     return None
+
+
+@pytest.fixture
+def real_workspace_id() -> str | None:
+    """Workspace ID (GUID) for REST-based E2E testing.
+
+    Distinct from ``real_workspace`` (which is a local git-synced path).
+    Set the PYFABRIC_TEST_WORKSPACE_ID environment variable to enable.
+    Returns None if the env var is not set so tests skip cleanly for
+    contributors who don't have a validation workspace.
+    """
+    return os.environ.get("PYFABRIC_TEST_WORKSPACE_ID") or None
