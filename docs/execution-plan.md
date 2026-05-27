@@ -66,39 +66,46 @@ Done-when: a downstream consumer can describe a Notebook + Environment
 pair entirely through builders, with no hand-written
 `notebook-settings.json` / `fs-settings.json` / `Environment.platform`. ✓
 
-## Phase C — fabric-cicd interoperability
+## Phase C — `pyfabric.deploy` (repo-to-workspace deployment)
 
-Gated on Phase A. Don't promote buggy code across environments.
+Gated on Phase A. Originally scoped as "fabric-cicd interoperability"
+but pivoted after the live spike against a validation workspace
+surfaced three findings that made the interop story weak:
 
-fabric-cicd v1.0.0 is now Microsoft's officially supported deployment
-tool. The pyfabric position: stay the authoring + local-test layer;
-make sure what we emit round-trips cleanly through a fabric-cicd
-publish. Concretely:
+1. **fabric-cicd does not run on Python 3.14** (the latest 1.1.0
+   requires `<3.14`). pyfabric does. Until upstream catches up,
+   fabric-cicd users on Python 3.14 have no path.
+2. **`.platform` does not byte-roundtrip through any REST publish**,
+   whether via fabric-cicd or pyfabric's own `upload_to_workspace`.
+   Fabric adds `"description": ""` to metadata and zeros the pinned
+   `logicalId` in `getDefinition` responses. The "byte-roundtrip"
+   claim in the original Phase C plan was empirically false for
+   metadata files.
+3. **logical_id pinning is git-sync-only**, not REST-publish. This
+   wasn't fabric-cicd's fault — it's a property of Fabric's REST
+   surface — but it invalidated the "pinned IDs survive deployment"
+   selling point.
 
-1. **Pre-publish lint integration.** Document the pattern for calling
-   `pyfabric.items.normalize.normalize_tree(repo_root, dry_run=True)`
-   and `is_canonical(path)` from a pre-fabric-cicd-publish CI step.
-   Goal: catch byte-canonicalization drift before fabric-cicd ships
-   non-canonical bytes that come back as drift on the next round-trip.
-2. **Byte-roundtrip test.** Add an integration test
-   (`tests/integration/test_fabric_cicd_roundtrip.py`, gated on an
-   env var) that publishes a builder-generated artifact via fabric-cicd
-   into a validation workspace, downloads it back via the item
-   definition REST API, and asserts byte equality with what
-   `write_artifact_file` produced locally. Any divergence is either a
-   pyfabric normalization gap or a fabric-cicd issue to file upstream.
-3. **`logical_id` preservation evidence.** Existing builders already
-   pin `logical_id` (see the [logical-id pinning
-   memory](claude-memory.d/logicalid-pinning.md) if installed). The
-   roundtrip test above doubles as evidence that fabric-cicd preserves
-   pinned IDs through publish/download.
-4. **Docs update.** New section in `docs/api.md` (or a sibling
-   `docs/fabric-cicd-interop.md`) describing the integration shape so
-   downstream teams have one place to look.
+Net: fabric-cicd's unique value reduced to its repo-walking publish,
+multi-env parameter substitution, and orphan-delete helpers. Each is
+small (~50–100 LOC) on top of primitives pyfabric already exposes
+(`load_from_disk`, `upload_to_workspace`, `list_items`, `delete_item`).
+Building this in pyfabric removes the Python version gap, gives one
+auth surface, and keeps the canonicalization guarantees consistent
+end-to-end.
 
-Done-when: integration test green against a validation workspace, docs
-landed, and any divergence between pyfabric canonical bytes and
-fabric-cicd output is either fixed in pyfabric or filed upstream.
+| Deliverable | Status | Notes |
+| ----------- | ------ | ----- |
+| `src/pyfabric/deploy.py` — `publish_repo` + `unpublish_orphans` | **Done** (this PR) | Composes existing primitives; fail-fast on errors; `item_types_in_scope` safety rail on unpublish. |
+| `tests/test_deploy.py` — 14 unit tests with mocked client | **Done** (this PR) | Covers discovery, create-vs-update logic, scope filtering, dry-run. |
+| `tests/test_deploy_e2e.py` — live full-lifecycle test | **Done** (this PR) | Gated on `PYFABRIC_TEST_WORKSPACE_ID`. Exercises create → update → dry-run-orphan → unpublish → verify-survivor + cleanup. ~88s end-to-end. |
+| `docs/deploy.md` | **Done** (this PR) | API reference, recommended flow, REST-publish gotchas (the `.platform` mutation), out-of-scope notes. |
+| Parameter substitution (`pyfabric.deploy.substitute_parameters`) | **Open** — follow-up | Match the `parameter.yml` `find_replace` schema from fabric-cicd so consumers can migrate. Not blocking the deployment story. |
+| Dependency ordering on publish | **Open** — follow-up | v1 publishes in directory order; works for typical layouts. Add topological sort if/when a real consumer hits a "B references A" failure. |
+
+Done-when: `pyfabric.deploy` is the documented and tested path for
+repo-to-workspace deployment, and the `feedback_pyfabric_logical_id_pinning`
+memory carries the REST-publish caveat from finding #3. ✓
 
 ## Phase D — SemanticModel + governance
 
