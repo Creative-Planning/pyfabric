@@ -12,7 +12,24 @@ commits directly:
 | ``*.Environment/Setting/Sparkcompute.yml``    | CRLF         | Yes (CRLF)  |
 | ``*.Notebook/notebook-content.py``            | LF           | Yes (LF)    |
 | ``*.Notebook/notebook-content.sql``           | LF           | Yes (LF)    |
+| ``*.SemanticModel/**/*.tmdl``                 | LF           | Blank (LFLF)|
+| ``*.DataPipeline/pipeline-content.json``      | LF           | No          |
 | everything else in Fabric artifact folders    | LF           | No          |
+
+SemanticModel ``*.tmdl`` files are the one type Fabric ends with a trailing
+**blank line** (two LF bytes, ``…content\\n\\n``), not zero and not one. Verified
+from Fabric git-sync auto-commits across two separate workspaces — every one of
+26+ Fabric-authored ``.tmdl`` files ended ``\\n\\n``, and a portal edit that
+touched only a model description still rewrote each single-``\\n`` table file to
+add the trailing blank line.
+
+A single-trailing-``\\n`` TMDL has been observed sitting in a workspace's git
+without being flagged for an inbound update — but that is also consistent with
+Fabric simply not having re-serialized that model yet (it re-emits the whole
+model, in ``\\n\\n`` form, on the next portal edit), so whether Fabric actively
+treats ``\\n`` ≡ ``\\n\\n`` when diffing is unconfirmed. Either way, writing
+``\\n\\n`` up front keeps committed bytes identical to whatever Fabric emits, so
+a later re-serialize produces no spurious diff — which is why we match it.
 
 If committed bytes don't match this convention, every Fabric sync cycle
 flags the file as "changed by Fabric" and pushes a no-op edit back into
@@ -84,21 +101,30 @@ ARTIFACT_GLOBS: tuple[str, ...] = (
     "*.Report/definition/**/*.pbir",
     "*.MirroredDatabase/.platform",
     "*.MirroredDatabase/mirroring.json",
+    "*.DataPipeline/.platform",
+    "*.DataPipeline/pipeline-content.json",
 )
 
 # File-type-specific rules. First match wins. Order matters.
-# Tuple shape: (path-glob, line-ending, trailing-newline-bool).
-_RULES: tuple[tuple[str, str, bool], ...] = (
+# Tuple shape: (path-glob, line-ending, trailing-newline-bool, trailing-blank-line-bool).
+# When the blank-line flag is set it supersedes the plain trailing-newline flag
+# (the file ends in two line-endings); the trailing-newline value is then ignored.
+# fnmatch (used by ``rule_for``) does NOT special-case ``/`` or ``**``, so a bare
+# ``*`` in a glob spans directory separators — ``*.SemanticModel/*.tmdl`` matches
+# ``definition/model.tmdl`` and ``definition/tables/x.tmdl`` alike.
+_RULES: tuple[tuple[str, str, bool, bool], ...] = (
     # CRLF + no trailing newline
-    ("*.Lakehouse/alm.settings.json", "\r\n", False),
+    ("*.Lakehouse/alm.settings.json", "\r\n", False, False),
     # CRLF + trailing CRLF
-    ("*.Environment/Setting/Sparkcompute.yml", "\r\n", True),
-    ("*.Environment/Setting/*.yml", "\r\n", True),  # future-proofing
+    ("*.Environment/Setting/Sparkcompute.yml", "\r\n", True, False),
+    ("*.Environment/Setting/*.yml", "\r\n", True, False),  # future-proofing
     # LF + trailing LF
-    ("*.Notebook/notebook-content.py", "\n", True),
-    ("*.Notebook/notebook-content.sql", "\n", True),
+    ("*.Notebook/notebook-content.py", "\n", True, False),
+    ("*.Notebook/notebook-content.sql", "\n", True, False),
+    # LF + trailing BLANK line — Fabric ends every SemanticModel TMDL with "\n\n"
+    ("*.SemanticModel/*.tmdl", "\n", False, True),
     # LF + no trailing — default for everything else
-    ("*", "\n", False),
+    ("*", "\n", False, False),
 )
 
 
@@ -111,6 +137,10 @@ class FileRule:
 
     line_ending: str  # "\n" or "\r\n"
     trailing_newline: bool
+    # When True the file ends with a trailing BLANK line (two ``line_ending``s,
+    # e.g. ``…\n\n``) — Fabric's form for SemanticModel TMDL. This supersedes
+    # ``trailing_newline``; if set, ``trailing_newline`` is ignored.
+    trailing_blank_line: bool = False
 
 
 @dataclass
@@ -138,9 +168,13 @@ def rule_for(rel_path: str) -> FileRule:
     slashes. The first matching glob in ``_RULES`` wins; the catch-all
     ``"*"`` ensures every artifact path resolves to a rule.
     """
-    for pattern, eol, trailing in _RULES:
+    for pattern, eol, trailing, blank in _RULES:
         if fnmatch.fnmatch(rel_path, pattern):
-            return FileRule(line_ending=eol, trailing_newline=trailing)
+            return FileRule(
+                line_ending=eol,
+                trailing_newline=trailing,
+                trailing_blank_line=blank,
+            )
     # Defensive fallback — the catch-all in _RULES means we never reach here.
     return FileRule(line_ending="\n", trailing_newline=False)
 
@@ -159,7 +193,15 @@ def canonical_bytes(rel_path: str, raw: bytes) -> bytes:
     except UnicodeDecodeError:
         return raw
     rule = rule_for(rel_path)
-    joined = rule.line_ending.join(text.splitlines())
+    lines = text.splitlines()
+    if rule.trailing_blank_line:
+        # splitlines keeps interior blank lines, so collapse any trailing ones
+        # before re-appending exactly one — otherwise normalization isn't a
+        # fixed point (``…\n\n`` would grow a third newline each pass).
+        while lines and lines[-1] == "":
+            lines.pop()
+        return (rule.line_ending.join(lines) + rule.line_ending * 2).encode("utf-8")
+    joined = rule.line_ending.join(lines)
     if rule.trailing_newline:
         joined += rule.line_ending
     return joined.encode("utf-8")
@@ -281,5 +323,6 @@ _ITEM_TYPES: frozenset[str] = frozenset(
         "SemanticModel",
         "Report",
         "MirroredDatabase",
+        "DataPipeline",
     }
 )
