@@ -320,20 +320,27 @@ class TestSaveToDisk:
         assert "fromColumn: fact_status.section_key" in text
         assert "toColumn: dim_section.section_key" in text
 
-    def test_files_use_lf_no_trailing_newline(
+    def test_files_use_fabric_byte_conventions(
         self, minimal_model: SemanticModel, tmp_path: Path
     ) -> None:
-        # All TMDL/JSON in a SemanticModel: LF, no trailing newline.
+        # LF everywhere; .platform/.pbism have no trailing newline, but TMDL
+        # ends with a trailing BLANK line ("\n\n") to match Fabric git-sync.
         item_dir = minimal_model.save_to_disk(tmp_path)
         for p in [
             item_dir / ".platform",
             item_dir / "definition.pbism",
+        ]:
+            raw = p.read_bytes()
+            assert b"\r\n" not in raw, f"{p.name} contains CRLF"
+            assert not raw.endswith(b"\n"), f"{p.name} has trailing newline"
+        for p in [
             item_dir / "definition" / "model.tmdl",
             item_dir / "definition" / "tables" / "fact_status.tmdl",
         ]:
             raw = p.read_bytes()
             assert b"\r\n" not in raw, f"{p.name} contains CRLF"
-            assert not raw.endswith(b"\n"), f"{p.name} has trailing newline"
+            assert raw.endswith(b"\n\n"), f"{p.name} missing trailing blank line"
+            assert not raw.endswith(b"\n\n\n"), f"{p.name} has extra blank lines"
 
     def test_lineage_tags_deterministic(
         self, minimal_model: SemanticModel, tmp_path: Path

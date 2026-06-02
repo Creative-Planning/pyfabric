@@ -31,8 +31,7 @@ class TestRuleFor:
             # LF + no trailing — defaults
             ("sm.SemanticModel/.platform", "\n", False),
             ("sm.SemanticModel/definition.pbism", "\n", False),
-            ("sm.SemanticModel/definition/model.tmdl", "\n", False),
-            ("sm.SemanticModel/definition/tables/dim_x.tmdl", "\n", False),
+            ("sm.SemanticModel/definition/diagramLayout.json", "\n", False),
             ("rpt.Report/report.json", "\n", False),
             # DataPipeline — LF, no trailing newline
             ("pl.DataPipeline/pipeline-content.json", "\n", False),
@@ -44,6 +43,24 @@ class TestRuleFor:
         rule = rule_for(rel_path)
         assert rule.line_ending == expected_eol
         assert rule.trailing_newline is expected_trailing
+        assert rule.trailing_blank_line is False
+
+    @pytest.mark.parametrize(
+        "rel_path",
+        [
+            # fnmatch's bare ``*`` spans ``/``, so the one glob covers TMDL at the
+            # top of ``definition/`` AND nested under ``tables/``.
+            "sm.SemanticModel/definition/model.tmdl",
+            "sm.SemanticModel/definition/database.tmdl",
+            "sm.SemanticModel/definition/tables/dim_x.tmdl",
+            "sm.SemanticModel/definition/cultures/en-US.tmdl",
+        ],
+    )
+    def test_tmdl_is_lf_trailing_blank_line(self, rel_path):
+        # Fabric ends every SemanticModel TMDL with a trailing blank line.
+        rule = rule_for(rel_path)
+        assert rule.line_ending == "\n"
+        assert rule.trailing_blank_line is True
 
 
 # ── canonical_bytes ─────────────────────────────────────────────────────────
@@ -51,10 +68,36 @@ class TestRuleFor:
 
 class TestCanonicalBytes:
     def test_lf_no_trailing_default(self):
-        # A SemanticModel TMDL with CRLF + trailing LF should drop both.
+        # A default-rule artifact (here a .pbism) with CRLF + trailing LF should
+        # drop both — LF, no trailing newline.
+        raw = b"model Model\r\n\tculture: en-US\r\n"
+        out = canonical_bytes("sm.SemanticModel/definition.pbism", raw)
+        assert out == b"model Model\n\tculture: en-US"
+
+    def test_tmdl_ends_with_trailing_blank_line(self):
+        # Fabric writes SemanticModel TMDL ending in a blank line ("\n\n").
         raw = b"model Model\r\n\tculture: en-US\r\n"
         out = canonical_bytes("sm.SemanticModel/definition/model.tmdl", raw)
-        assert out == b"model Model\n\tculture: en-US"
+        assert out == b"model Model\n\tculture: en-US\n\n"
+
+    def test_tmdl_fabric_output_is_fixed_point(self):
+        # The anti-flap guarantee: Fabric's own output must normalize to itself,
+        # otherwise the file flaps on every git-sync cycle.
+        raw = b"model Model\n\tculture: en-US\n\n"
+        assert canonical_bytes("sm.SemanticModel/definition/model.tmdl", raw) == raw
+
+    def test_tmdl_single_newline_gets_blank_line(self):
+        # A one-trailing-newline TMDL (e.g. a hand-assembled or tool-written file)
+        # is drifted and must gain the second newline.
+        raw = b"table t\n"
+        out = canonical_bytes("sm.SemanticModel/definition/tables/t.tmdl", raw)
+        assert out == b"table t\n\n"
+
+    def test_tmdl_nested_path_gets_blank_line(self):
+        # fnmatch ``*`` spans ``/`` so nested tables/ files match the TMDL rule.
+        raw = b"table dim_x"
+        out = canonical_bytes("sm.SemanticModel/definition/tables/dim_x.tmdl", raw)
+        assert out == b"table dim_x\n\n"
 
     def test_notebook_lf_with_trailing(self):
         raw = b"# cell 1\r\nprint('hi')"  # missing trailing newline + CRLF
@@ -91,9 +134,9 @@ class TestCanonicalBytes:
         assert out == raw
 
     def test_handles_mixed_line_endings(self):
-        # \r\n and \n in the same file
+        # \r\n and \n in the same file — default rule (.pbism): LF, no trailing.
         raw = b"a\r\nb\nc\r\n"
-        out = canonical_bytes("sm.SemanticModel/definition/model.tmdl", raw)
+        out = canonical_bytes("sm.SemanticModel/definition.pbism", raw)
         assert out == b"a\nb\nc"
 
 
@@ -111,8 +154,9 @@ class TestWriteArtifactFile:
     def test_writes_without_workspace_root_uses_ancestor(self, tmp_path: Path):
         sm = tmp_path / "sm.SemanticModel" / "definition" / "model.tmdl"
         write_artifact_file(sm, "model M\r\n\tculture: en-US\r\n")
-        # LF, no trailing newline
-        assert sm.read_bytes() == b"model M\n\tculture: en-US"
+        # Ancestor resolution finds the .SemanticModel folder, so the TMDL rule
+        # fires: LF + trailing blank line.
+        assert sm.read_bytes() == b"model M\n\tculture: en-US\n\n"
 
     def test_creates_parent_dirs(self, tmp_path: Path):
         deep = tmp_path / "sm.SemanticModel" / "definition" / "tables" / "x.tmdl"
@@ -123,7 +167,7 @@ class TestWriteArtifactFile:
     def test_accepts_bytes(self, tmp_path: Path):
         f = tmp_path / "sm.SemanticModel" / "definition" / "model.tmdl"
         write_artifact_file(f, b"model M\r\n")
-        assert f.read_bytes() == b"model M"
+        assert f.read_bytes() == b"model M\n\n"
 
 
 # ── is_canonical ────────────────────────────────────────────────────────────
@@ -156,7 +200,7 @@ class TestNormalizeTree:
         result = normalize_tree(tmp_path)
         assert len(result.changed) == 2
         assert (sm / ".platform").read_bytes() == b'{"k": "v"}'
-        assert (sm / "definition" / "model.tmdl").read_bytes() == b"model M"
+        assert (sm / "definition" / "model.tmdl").read_bytes() == b"model M\n\n"
 
     def test_dry_run_does_not_write(self, tmp_path: Path):
         sm = tmp_path / "sm.SemanticModel" / "definition"
