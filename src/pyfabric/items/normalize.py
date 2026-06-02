@@ -23,11 +23,13 @@ from Fabric git-sync auto-commits across two separate workspaces — every one o
 touched only a model description still rewrote each single-``\\n`` table file to
 add the trailing blank line.
 
-Fabric *tolerates* a single trailing ``\\n`` on import (it normalizes trailing
-newlines when diffing git, so a one-newline file is not flagged as drift), but
-the next portal edit re-serializes the whole model to the ``\\n\\n`` form. Writing
-``\\n\\n`` up front keeps committed bytes identical to whatever Fabric will emit,
-so that later re-serialize produces no spurious diff.
+A single-trailing-``\\n`` TMDL has been observed sitting in a workspace's git
+without being flagged for an inbound update — but that is also consistent with
+Fabric simply not having re-serialized that model yet (it re-emits the whole
+model, in ``\\n\\n`` form, on the next portal edit), so whether Fabric actively
+treats ``\\n`` ≡ ``\\n\\n`` when diffing is unconfirmed. Either way, writing
+``\\n\\n`` up front keeps committed bytes identical to whatever Fabric emits, so
+a later re-serialize produces no spurious diff — which is why we match it.
 
 If committed bytes don't match this convention, every Fabric sync cycle
 flags the file as "changed by Fabric" and pushes a no-op edit back into
