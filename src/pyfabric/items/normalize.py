@@ -12,6 +12,7 @@ commits directly:
 | ``*.Environment/Setting/Sparkcompute.yml``    | CRLF         | Yes (CRLF)  |
 | ``*.Notebook/notebook-content.py``            | LF           | Yes (LF)    |
 | ``*.Notebook/notebook-content.sql``           | LF           | Yes (LF)    |
+| ``*.DataPipeline/pipeline-content.json``      | LF           | No          |
 | everything else in Fabric artifact folders    | LF           | No          |
 
 If committed bytes don't match this convention, every Fabric sync cycle
@@ -84,6 +85,8 @@ ARTIFACT_GLOBS: tuple[str, ...] = (
     "*.Report/definition/**/*.pbir",
     "*.MirroredDatabase/.platform",
     "*.MirroredDatabase/mirroring.json",
+    "*.DataPipeline/.platform",
+    "*.DataPipeline/pipeline-content.json",
 )
 
 # File-type-specific rules. First match wins. Order matters.
@@ -281,5 +284,6 @@ _ITEM_TYPES: frozenset[str] = frozenset(
         "SemanticModel",
         "Report",
         "MirroredDatabase",
+        "DataPipeline",
     }
 )

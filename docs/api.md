@@ -221,6 +221,38 @@ CRUD operations for Fabric workspace items via REST API.
 | `encode_part(path, content)` | Build a definition part dict for the API. |
 | `decode_part(part)` | Decode base64 payload from a part dict. |
 
+### pyfabric.items.datapipeline
+
+Build Fabric Data Pipeline (`pipeline-content.json`) artifacts that round-trip
+cleanly through git-sync. Emits Fabric's canonical form: notebook activities
+reference the target notebook's git `logicalId` (not its workspace object id),
+`workspaceId` is zeroed, keys follow Fabric's order, and bytes are LF with no
+trailing newline.
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `DataPipelineBuilder(description="")` | Builder for a pipeline definition. |
+| `.add_notebook_activity(name, notebook, *, parameters=None, depends_on=None, workspace_id=None)` | Add a `TridentNotebook` activity. `notebook` is a `.Notebook` dir, its `.platform`, or a logicalId GUID. Returns the activity name. |
+| `.add_semantic_model_refresh(name, *, dataset_id, connection, depends_on=None)` | Add a `PBISemanticModelRefresh` activity. `connection` must be a real provisioned Power BI connection id. |
+| `.add_activity(name, activity_type, type_properties, *, depends_on=None, external_references=None)` | Generic activity escape hatch. |
+| `.to_pipeline_content()` | Render `pipeline-content.json` as a string. |
+| `.to_bundle(display_name, *, logical_id=None)` / `.save_to_disk(output_dir, *, display_name, ...)` | Materialize an `ArtifactBundle` / write the `.DataPipeline` folder with canonical bytes. |
+| `notebook_logical_id(notebook)` | Resolve a notebook's git logicalId from its `.platform` (or pass a GUID through). |
+
+Activity names are validated to Fabric's allowed set (letters, numbers, `-`,
+`_`, spaces) — anything else raises before the pipeline reaches the portal.
+
+**Example:**
+
+```python
+from pyfabric.items.datapipeline import DataPipelineBuilder
+
+pl = DataPipelineBuilder(description="Daily refresh")
+pl.add_notebook_activity("Extract", "ws/nb_extract.Notebook", parameters={"path": ""})
+pl.add_notebook_activity("Transform", "ws/nb_transform.Notebook", depends_on=["Extract"])
+pl.save_to_disk("ws/", display_name="pl_daily")
+```
+
 ---
 
 ## pyfabric.data — Data Access

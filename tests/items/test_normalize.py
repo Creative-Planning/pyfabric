@@ -34,6 +34,9 @@ class TestRuleFor:
             ("sm.SemanticModel/definition/model.tmdl", "\n", False),
             ("sm.SemanticModel/definition/tables/dim_x.tmdl", "\n", False),
             ("rpt.Report/report.json", "\n", False),
+            # DataPipeline — LF, no trailing newline
+            ("pl.DataPipeline/pipeline-content.json", "\n", False),
+            ("pl.DataPipeline/.platform", "\n", False),
             ("any/random/file.txt", "\n", False),
         ],
     )
@@ -189,3 +192,22 @@ class TestNormalizeTree:
         result = normalize_tree(tmp_path, extra_globs=["custom.dir/*.txt"])
         assert custom in result.changed
         assert custom.read_bytes() == b"hello"
+
+    def test_covers_datapipeline(self, tmp_path: Path):
+        # DataPipeline artifacts must be picked up by ARTIFACT_GLOBS and
+        # normalized to LF + no trailing newline (CRLF and a trailing newline
+        # both get fixed). Without the *.DataPipeline globs the pipeline flaps
+        # on every git-sync.
+        pl = tmp_path / "pl.DataPipeline"
+        pl.mkdir()
+        (pl / ".platform").write_bytes(b'{"k": "v"}\r\n')
+        (pl / "pipeline-content.json").write_bytes(
+            b'{\r\n  "properties": {\r\n    "activities": []\r\n  }\r\n}\r\n'
+        )
+        result = normalize_tree(tmp_path)
+        assert (pl / ".platform") in result.changed
+        assert (pl / "pipeline-content.json") in result.changed
+        assert (pl / ".platform").read_bytes() == b'{"k": "v"}'
+        assert (pl / "pipeline-content.json").read_bytes() == (
+            b'{\n  "properties": {\n    "activities": []\n  }\n}'
+        )
