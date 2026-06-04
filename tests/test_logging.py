@@ -118,3 +118,53 @@ class TestGetLogPath:
         path = get_log_path("my_script")
         assert "my_script" in path.name
         assert path.suffix == ".jsonl"
+
+
+class TestPositionalArgsInterpolation:
+    """#103: %-style positional args must be interpolated into the event message,
+    not left verbatim with the values stranded in a `positional_args` field."""
+
+    def test_percent_args_interpolated_not_stranded(self, tmp_path, monkeypatch):
+        import structlog
+
+        import pyfabric.logging as plog
+
+        monkeypatch.setattr(plog, "LOGS_DIR", tmp_path)
+        log_path = plog.setup_logging("posargs_test")
+        try:
+            # A library-style %-format call, exactly like data/lakehouse.py uses.
+            structlog.get_logger("test.posargs").info(
+                "Target: %s/%s.%s (%d rows, %d cols)", "lh", "dbo", "tbl", 5, 3
+            )
+            for h in logging.getLogger().handlers:
+                h.flush()
+            content = log_path.read_text(encoding="utf-8")
+        finally:
+            # Release the file handle so tmp_path can be cleaned on Windows.
+            root = logging.getLogger()
+            for h in list(root.handlers):
+                h.close()
+                root.removeHandler(h)
+
+        assert "Target: lh/dbo.tbl (5 rows, 3 cols)" in content
+        assert "positional_args" not in content
+        assert "%s" not in content
+
+    def test_formatter_is_in_configured_chain(self, tmp_path, monkeypatch):
+        import structlog
+
+        import pyfabric.logging as plog
+
+        monkeypatch.setattr(plog, "LOGS_DIR", tmp_path)
+        plog.setup_logging("posargs_chain")
+        try:
+            processors = structlog.get_config()["processors"]
+            assert any(
+                isinstance(p, structlog.stdlib.PositionalArgumentsFormatter)
+                for p in processors
+            ), "PositionalArgumentsFormatter missing from the processor chain (#103)"
+        finally:
+            root = logging.getLogger()
+            for h in list(root.handlers):
+                h.close()
+                root.removeHandler(h)

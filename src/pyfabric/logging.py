@@ -163,6 +163,13 @@ def setup_logging(
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
             structlog.stdlib.add_logger_name,
+            # Apply %-style positional args to the event message. Without this,
+            # `log.info("Target: %s/%s.%s", lh, schema, table)` is NOT interpolated:
+            # structlog leaves the format string verbatim and stashes the values in
+            # a `positional_args` field, so logs read "Target: %s/%s.%s" with the
+            # real values hidden. Must run before any processor that consumes the
+            # rendered message. (#103)
+            structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.TimeStamper(fmt="iso"),
             mask_tokens_processor,
             structlog.processors.StackInfoRenderer(),
