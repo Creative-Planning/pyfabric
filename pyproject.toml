@@ -41,6 +41,12 @@ pyfabric = "pyfabric.testing.plugin"
 azure = [
     "azure-identity>=1.17",
     "requests>=2.32",
+    # pyjwt is pulled in transitively via azure-identity -> msal. msal's
+    # own constraint (PyJWT[crypto]>=1.0.0,<3) allows versions affected by
+    # PYSEC-2026-175/177/178/179 (algorithm-confusion / unbounded JWKS
+    # fetch; fixed in 2.13.0). Floor it here so a fresh install resolves a
+    # patched pyjwt rather than the highest msal-permitted release.
+    "pyjwt>=2.13.0",
 ]
 data = [
     "pyodbc>=5.1",
