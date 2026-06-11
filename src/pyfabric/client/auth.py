@@ -36,6 +36,9 @@ log = structlog.get_logger()
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 STORAGE_RESOURCE = "https://storage.azure.com"
 SQL_RESOURCE = "https://database.windows.net"
+# Power BI REST (semantic-model refresh and other dataset operations live on the
+# Power BI host with its own audience, distinct from the Fabric API).
+PBI_RESOURCE = "https://analysis.windows.net/powerbi/api"
 
 # Token refresh before expiry (seconds)
 _REFRESH_MARGIN = 300  # 5 minutes before expiry
@@ -216,6 +219,11 @@ class FabricCredential:
     def sql_token(self) -> str:
         """Token for SQL analytics endpoint (database.windows.net)."""
         return self.get_token(SQL_RESOURCE)
+
+    @property
+    def powerbi_token(self) -> str:
+        """Token for the Power BI REST API (semantic-model refresh, etc.)."""
+        return self.get_token(PBI_RESOURCE)
 
     def account_info(self) -> dict:
         """Return current az account info, or {} if unavailable."""
