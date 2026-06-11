@@ -1,36 +1,45 @@
-"""Build Fabric Report items (PBIR-Legacy format) by hand.
+"""Build Fabric Report items (modern **PBIR** format) by hand.
 
-A Page-and-Visual builder for KPI strips, slicers, and detail tables
-linked to a SemanticModel via a relative byPath reference. Supports
-single-metric and multi-metric cards (with label typography + theme
-color styling), single-column and hierarchy slicers (with optional
-allow-list filter), tables with mixed Column/Measure/Aggregate fields
-and OrderBy on any of them, and an optional report-level theme bundled
-into ``StaticResources/SharedResources/BaseThemes/``.
+A Page-and-Visual builder for slicers and detail tables linked to a
+SemanticModel via a relative ``byPath`` reference. Emits the modern PBIR
+``definition/`` folder format — a separate ``page.json`` per page and a
+separate ``visual.json`` per visual — which is Microsoft's current
+diff-able report format and the one current Fabric opens reliably.
 
-Out of scope: tooltip pages (the wiring schema needs to be re-derived
-from working examples), bookmarks, drillthrough, page-level filters
-beyond a slicer's allow-list.
+Scope (what emits byte-confident PBIR today):
 
-Output format is **PBIR-Legacy** (single ``report.json``) — the format
-Fabric currently emits when a report is created via ``+ New item →
-Report`` in the workspace UI. The newer folder-per-page PBIR format is
-not emitted; if a tenant requires it, open the report in Desktop and
-re-save to convert.
+- **Slicer** → a ``listSlicer`` with one or more column projections
+  (the first ``active``). The ``listSlicer`` has a built-in search box;
+  there is no property to author for it.
+- **Table** → a ``tableEx`` with mixed :class:`Column` / :class:`Measure`
+  projections, an optional sort on a single column, and a per-projection
+  ``filterConfig`` (columns ``Categorical``, measures ``Advanced``).
+
+``Card`` and ``MultiCard`` remain in the public API for source
+compatibility but their PBIR emit is **not yet implemented** — it needs
+UI-captured reference bytes. Instantiating them on a saved page raises
+``NotImplementedError``.
+
+PBIR shapes that still need a UI capture (no attested reference bytes —
+would be guessed, so they are dropped-with-warning or raise rather than
+emit invented JSON): tooltip pages, bookmarks, drillthrough,
+hierarchy/expansion slicers, slicer ``mode`` variants (Dropdown/Between),
+``allow_values`` slicer filters, inline column aggregations,
+``format_string`` column properties, sort-by-measure, and the dynamic
+title (only the fully-styled form is attested; the minimal form emitted
+here is provisional). Each is handled at the point it would be emitted.
 
 Every write routes through
 :func:`pyfabric.items.normalize.write_artifact_file` so emitted bytes
-match Fabric's per-file-type byte convention and won't trigger sync flap.
+match Fabric's per-file-type byte convention (LF, no BOM, no trailing
+newline for report JSON) and won't trigger sync flap.
 
 Usage::
 
     from pathlib import Path
     from pyfabric.items.report import (
-        Aggregate,
-        Card,
         Column,
         Measure,
-        MultiCard,
         Page,
         Position,
         Report,
@@ -40,34 +49,21 @@ Usage::
     )
 
     page = Page(
-        display_name="QA Summary",
+        display_name="Page 1",
         width=1280,
         height=720,
         visuals=[
             Slicer(
-                position=Position(x=10, y=12, width=212, height=80),
-                field=Column("dim_projection", "region"),
-                mode="Dropdown",
-            ),
-            MultiCard(
-                position=Position(x=10, y=110, width=1260, height=120),
-                measures=[
-                    Measure("fact_x", "# PDFs Total", format_string="#,0"),
-                    Measure("fact_x", "# PDFs OK", format_string="#,0"),
-                ],
-                display_units="None",
+                position=Position(x=10, y=0, width=430, height=280),
+                field=Column("dim_x", "name"),
             ),
             Table(
-                position=Position(x=10, y=240, width=1260, height=460),
+                position=Position(x=460, y=0, width=780, height=270),
                 fields=[
-                    Column("dim_projection", "project_number"),
-                    Column("fact_x", "status"),
-                    Aggregate("fact_x", "missing_field_count", function="sum"),
+                    Column("dim_x", "name"),
+                    Column("dim_x", "city"),
                 ],
-                order_by=TableOrderBy(
-                    field=Aggregate("fact_x", "missing_field_count", function="sum"),
-                    direction="desc",
-                ),
+                order_by=TableOrderBy(field=Column("dim_x", "name")),
             ),
         ],
     )
@@ -76,6 +72,7 @@ Usage::
         name="rpt_my_report",
         semantic_model_path="../sm_my_model.SemanticModel",
         pages=[page],
+        description="An example report.",
     ).save_to_disk(Path("ws/"))
 """
 
@@ -105,36 +102,14 @@ LabelPosition = Literal["belowValue", "aboveValue"]
 # to setting fontSize directly because the role adapts on theme swap.
 LabelHeading = Literal["Heading1", "Heading2", "Heading3", "Body"]
 
-
-# ``valueDisplayUnits`` literal magnitudes used by Power BI cards.
-# 1D = "show actual" (None); 0D = Auto (the abbreviation default that
-# turns 1623 → "2K"); the rest are divisor magnitudes.
-_DISPLAY_UNITS_LITERAL: dict[DisplayUnits, str] = {
-    "Auto": "0D",
-    "None": "1D",
-    "Thousands": "1000D",
-    "Millions": "1000000D",
-    "Billions": "1000000000D",
-    "Trillions": "1000000000000D",
+# PBIR sort directions (the modern format uses spelled-out enum strings,
+# not the legacy integer codes).
+_SORT_DIRECTION: dict[SortDirection, str] = {
+    "asc": "Ascending",
+    "desc": "Descending",
 }
 
-# Aggregation function index in the PBIR ``Aggregation.Function`` enum.
-_AGG_FN_INDEX: dict[AggregationFunction, int] = {
-    "sum": 0,
-    "avg": 1,
-    "min": 2,
-    "max": 3,
-    "count": 4,
-    "distinctCount": 5,
-}
-
-# Sort direction index in the PBIR ``OrderBy.Direction`` enum.
-_SORT_DIR_INDEX: dict[SortDirection, int] = {
-    "asc": 1,
-    "desc": 2,
-}
-
-# Stable UUID namespace for deterministic visual / page / pod ids.
+# Stable UUID namespace for deterministic visual / page / filter ids.
 _REPORT_NS = uuid.UUID("c1d2e3f4-0001-4000-8000-000000000000")
 
 
@@ -145,11 +120,10 @@ _REPORT_NS = uuid.UUID("c1d2e3f4-0001-4000-8000-000000000000")
 class ThemeColor:
     """A reference to a color in the report's theme palette.
 
-    Use in place of hex literals so cards and other visuals adapt when
-    the theme is swapped. ``color_id`` indexes the theme's
-    ``dataColors`` list (0-based; theme conventions vary). ``percent``
-    tints the color (0.0 = full saturation, 0.6 = soft tint suitable
-    for backgrounds).
+    Use in place of hex literals so visuals adapt when the theme is
+    swapped. ``color_id`` indexes the theme's ``dataColors`` list
+    (0-based; theme conventions vary). ``percent`` tints the color
+    (0.0 = full saturation, 0.6 = soft tint suitable for backgrounds).
     """
 
     color_id: int
@@ -180,8 +154,9 @@ class Column:
     """A column reference in the SemanticModel, used inside a visual.
 
     ``entity`` is the SemanticModel table name; ``name`` is the column
-    name on that table. ``format_string`` overrides the column-property
-    formatter inside the visual (does not change the column's default).
+    name on that table. ``format_string`` is accepted for source
+    compatibility but is **not yet emitted** in PBIR (column-property
+    formatting needs UI-captured reference bytes).
     """
 
     entity: str
@@ -191,7 +166,11 @@ class Column:
 
 @dataclass(frozen=True)
 class Measure:
-    """A measure reference in the SemanticModel, used inside a visual."""
+    """A measure reference in the SemanticModel, used inside a visual.
+
+    ``format_string`` is accepted for source compatibility but is **not
+    yet emitted** in PBIR.
+    """
 
     entity: str
     name: str
@@ -202,9 +181,11 @@ class Measure:
 class Aggregate:
     """An inline aggregation of a column inside a visual.
 
-    Lets a Table or OrderBy reference ``Sum(table.col)`` without
-    requiring a model-level measure. Power BI emits this with an
-    ``Aggregation`` wrapper in the prototype query.
+    Retained for source compatibility. The modern PBIR projection shape
+    for an inline aggregation is **not attested** in the reference
+    reports (they project only columns and model measures), so a
+    :class:`Table` that references an ``Aggregate`` raises
+    :class:`NotImplementedError` on save until UI-captured bytes exist.
     """
 
     entity: str
@@ -222,14 +203,19 @@ FieldRef = Column | Measure | Aggregate
 
 @dataclass
 class Position:
-    """Visual placement on a Page (canvas coordinates in pixels)."""
+    """Visual placement on a Page (canvas coordinates in pixels).
+
+    Whole-number coordinates emit as JSON ints (``"y": 0``), matching
+    Fabric's output for non-dragged visuals; fractional values emit as
+    floats. ``tab_order`` defaults to ``z`` when left at 0.
+    """
 
     x: float
     y: float
     width: float
     height: float
     z: float = 0.0
-    tab_order: int = 0
+    tab_order: int | None = None
 
 
 # ── Visuals ─────────────────────────────────────────────────────────────────
@@ -245,19 +231,18 @@ class Visual:
 
 @dataclass
 class Slicer(Visual):
-    """A slicer visual.
+    """A slicer visual, emitted as a ``listSlicer``.
 
-    ``field`` accepts either a single :class:`Column` (the common case)
-    or a list of columns to render a **hierarchy slicer** with one
-    drill level per entry. Hierarchy slicers must use ``mode="Basic"``;
-    other modes are silently coerced. All hierarchy levels start
-    collapsed (no preselected expansion); customize in Desktop if you
-    need a specific drill path on first load.
+    ``field`` accepts a single :class:`Column` (the common case) or a
+    list of columns. The first projection is marked ``active``; the rest
+    inactive. The ``listSlicer`` has a built-in search box.
 
-    ``allow_values`` emits a hardcoded slicer-level filter that limits
-    the dropdown to those values — useful for scoping the report
-    (e.g. a status slicer showing only ``["INCOMPLETE", "NOT_DETECTED"]``).
-    The filter targets the **leaf** column when ``field`` is a hierarchy.
+    ``mode`` and ``allow_values`` are accepted for source compatibility
+    but are **not yet emitted** in PBIR — the modern bytes for non-list
+    slicer modes and for a hardcoded allow-list filter need a UI capture
+    (the only attested reference is a bare ``listSlicer``). A hierarchy
+    (multi-column ``field``) emits as additional inactive projections,
+    not as an ``expansionStates`` drill hierarchy (also un-attested).
     """
 
     field: Column | list[Column] = field(default_factory=lambda: Column("", ""))
@@ -283,9 +268,9 @@ class Slicer(Visual):
 class Card(Visual):
     """A single-metric KPI card.
 
-    ``display_units="None"`` (default) shows the actual integer; ``"Auto"``
-    triggers Power BI's "2K" abbreviation. Set ``title`` to override the
-    measure-name title; set to empty string to suppress.
+    Retained in the public API for source compatibility. **PBIR emit is
+    not yet implemented** — needs UI-captured reference bytes. Saving a
+    page that contains a ``Card`` raises :class:`NotImplementedError`.
     """
 
     measure: Measure = field(default_factory=lambda: Measure("", ""))
@@ -295,20 +280,11 @@ class Card(Visual):
 
 @dataclass
 class MultiCard(Visual):
-    """A multi-metric KPI strip (one cardVisual rendering several measures).
+    """A multi-metric KPI strip.
 
-    All measures share ``display_units``. ``arrangement`` controls
-    whether tiles flow in rows or columns. The polish flags
-    (``show_outline``, ``show_accent_bar``, ``show_shadow``) wire the
-    matching ``objects`` properties.
-
-    The label-styling props target the small text under each value:
-
-    - ``label_heading`` — Power BI typography role (``"Heading2"`` etc.).
-      Theme-driven font size + weight; preferable to setting a literal
-      font size because the role adapts on theme swap.
-    - ``label_position`` — ``"belowValue"`` (default) or ``"aboveValue"``.
-    - ``label_font_color`` — :class:`ThemeColor` reference for label text.
+    Retained in the public API for source compatibility. **PBIR emit is
+    not yet implemented** — needs UI-captured reference bytes. Saving a
+    page that contains a ``MultiCard`` raises :class:`NotImplementedError`.
     """
 
     measures: list[Measure] = field(default_factory=list)
@@ -324,7 +300,12 @@ class MultiCard(Visual):
 
 @dataclass
 class TableOrderBy:
-    """Sort spec for a Table visual."""
+    """Sort spec for a Table visual.
+
+    Only sort-by-:class:`Column` is byte-confident from the references.
+    Sorting by a :class:`Measure` or :class:`Aggregate` raises
+    :class:`NotImplementedError` on save (un-attested PBIR shape).
+    """
 
     field: FieldRef
     direction: SortDirection = "asc"
@@ -332,30 +313,45 @@ class TableOrderBy:
 
 @dataclass
 class Table(Visual):
-    """A table visual with one or more field/measure/aggregate columns.
+    """A table visual, emitted as a ``tableEx``.
 
-    ``order_by`` is optional; when omitted, Power BI uses its default
-    sort. Provide an :class:`Aggregate` reference there to sort by
-    something like ``Sum(missing_field_count)`` without defining a
-    model measure.
+    ``fields`` may mix :class:`Column` and :class:`Measure` projections.
+    ``order_by`` is optional and currently supports sort-by-column only.
+
+    ``title`` optionally binds a measure-driven dynamic title (the
+    ``visualContainerObjects.title`` shape). **Caveat:** only the
+    *fully-styled* title form is attested in the reference reports; the
+    minimal form emitted here (``show`` + ``text``) needs a UI capture to
+    certify its exact bytes. The hook is provided so callers can author
+    one, but treat its bytes as provisional.
     """
 
     fields: list[FieldRef] = field(default_factory=list)
     order_by: TableOrderBy | None = None
+    title: Measure | None = None
 
 
 # ── Page ────────────────────────────────────────────────────────────────────
 
 
+PageDisplayOption = Literal["FitToPage", "ActualSize", "FitToWidth"]
+
+
 @dataclass
 class Page:
-    """A single report page (called a "section" in PBIR-Legacy JSON)."""
+    """A single report page.
+
+    ``name`` is the page's id (also its folder name under
+    ``definition/pages/``). Leave blank to derive a deterministic id from
+    the report + display name; pin it for byte-stable output.
+    """
 
     display_name: str
     visuals: list[Visual] = field(default_factory=list)
     width: float = 1280.0
     height: float = 720.0
     name: str = ""  # auto-filled from display_name if blank
+    display_option: PageDisplayOption = "FitToPage"
 
 
 # ── Report ──────────────────────────────────────────────────────────────────
@@ -367,21 +363,24 @@ class ReportError(Exception):
 
 @dataclass
 class Report:
-    """A full Fabric Report item.
+    """A full Fabric Report item, emitted in modern PBIR format.
 
-    ``semantic_model_path`` is a relative path from the report folder
-    to a sibling ``*.SemanticModel`` folder (e.g. ``"../sm_x.SemanticModel"``).
-    Emitted as a PBIR-Legacy ``definition.pbir`` ``byPath`` reference.
+    ``semantic_model_path`` is a relative path from the report folder to
+    a sibling ``*.SemanticModel`` folder (e.g. ``"../sm_x.SemanticModel"``),
+    emitted as a ``definition.pbir`` ``byPath`` reference.
 
     ``theme``, when set, bundles a base theme JSON file at
-    ``StaticResources/SharedResources/BaseThemes/<theme.name>.json``
-    and registers it as the report's base theme. Without a theme,
-    Power BI applies its workspace default.
+    ``StaticResources/SharedResources/BaseThemes/<theme.name>.json`` and
+    registers it as the report's base theme. Without a theme, Power BI
+    applies its workspace default. pyfabric never bundles a default
+    theme — the caller supplies it.
 
-    **A non-empty description is required by default.** Reports show up
-    in the workspace listing and item-info pane; an empty description
-    is a poor consumer experience. Set ``strict_descriptions=False``
-    to opt out (a warning is logged).
+    **A non-empty description is required by default.** It is validated
+    and surfaced through the API, but — per Fabric's behavior — it is
+    **not written into ``.platform``** (Fabric strips report descriptions
+    there and would otherwise flap on sync). Set
+    ``strict_descriptions=False`` to skip the validation (a warning is
+    logged).
     """
 
     name: str
@@ -396,8 +395,8 @@ class Report:
         """Return a list of human-readable error messages.
 
         Empty list means the report passes pre-emit validation. Called
-        automatically from :meth:`save_to_disk`; expose it separately
-        so callers can lint without writing.
+        automatically from :meth:`save_to_disk`; expose it separately so
+        callers can lint without writing.
         """
         errors: list[str] = []
         if not (self.description or "").strip():
@@ -416,11 +415,12 @@ class Report:
         return errors
 
     def save_to_disk(self, output_dir: Path | str) -> Path:
-        """Emit the full ``<name>.Report`` folder.
+        """Emit the full ``<name>.Report`` folder in modern PBIR format.
 
         Returns the path to the created folder. Raises :class:`ReportError`
-        if pre-emit validation fails. All writes route through
-        :func:`pyfabric.items.normalize.write_artifact_file`.
+        if pre-emit validation fails, and :class:`NotImplementedError`
+        for visuals whose PBIR bytes are not yet implemented. All writes
+        route through :func:`pyfabric.items.normalize.write_artifact_file`.
         """
         errors = self.validate()
         if errors:
@@ -442,7 +442,24 @@ class Report:
 
         write_artifact_file(item_dir / ".platform", self._emit_platform())
         write_artifact_file(item_dir / "definition.pbir", self._emit_pbir())
-        write_artifact_file(item_dir / "report.json", self._emit_report_json())
+        write_artifact_file(
+            item_dir / "definition" / "version.json", self._emit_version()
+        )
+        write_artifact_file(
+            item_dir / "definition" / "report.json", self._emit_report_json()
+        )
+        write_artifact_file(
+            item_dir / "definition" / "pages" / "pages.json", self._emit_pages_json()
+        )
+        for page in self.pages:
+            page_dir = item_dir / "definition" / "pages" / page.name
+            write_artifact_file(page_dir / "page.json", _emit_page_json(page))
+            for visual in page.visuals:
+                visual_dir = page_dir / "visuals" / visual.name
+                write_artifact_file(
+                    visual_dir / "visual.json", _emit_visual_json(visual)
+                )
+
         if self.theme is not None:
             theme_path = (
                 item_dir
@@ -465,13 +482,14 @@ class Report:
     # ── File emitters ──────────────────────────────────────────────────────
 
     def _emit_platform(self) -> str:
+        # NOTE: no ``description`` key — Fabric strips report descriptions
+        # from .platform on sync, so emitting one causes a permanent flap.
         return json.dumps(
             {
                 "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
                 "metadata": {
                     "type": "Report",
                     "displayName": self.name,
-                    **({"description": self.description} if self.description else {}),
                 },
                 "config": {"version": "2.0", "logicalId": self.logical_id},
             },
@@ -488,69 +506,73 @@ class Report:
             indent=2,
         )
 
+    def _emit_version(self) -> str:
+        return json.dumps(
+            {
+                "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/versionMetadata/1.0.0/schema.json",
+                "version": "2.0.0",
+            },
+            indent=2,
+        )
+
     def _emit_report_json(self) -> str:
-        report_config: dict[str, Any] = {
-            "version": "5.72",
-            "activeSectionIndex": 0,
-            "defaultDrillFilterOtherVisuals": True,
-            "linguisticSchemaSyncVersion": 0,
-            "settings": {
-                "useNewFilterPaneExperience": True,
-                "allowChangeFilterTypes": True,
-                "useStylableVisualContainerHeader": True,
-                "queryLimitOption": 6,
-                "useEnhancedTooltips": True,
-                "exportDataMode": 1,
-                "useDefaultAggregateDisplayName": True,
-            },
-            "objects": {
-                "section": [
-                    {
-                        "properties": {
-                            "verticalAlignment": {
-                                "expr": {"Literal": {"Value": "'Top'"}}
-                            }
-                        }
-                    }
-                ]
-            },
+        payload: dict[str, Any] = {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/report/3.3.0/schema.json",
         }
         if self.theme is not None:
-            report_config["themeCollection"] = {
+            payload["themeCollection"] = {
                 "baseTheme": {
                     "name": self.theme.name,
-                    "type": 2,
-                    "version": {
-                        "visual": "2.8.0",
-                        "report": "3.2.0",
+                    "reportVersionAtImport": {
+                        "visual": "2.9.0",
+                        "report": "3.3.0",
                         "page": "2.3.1",
                     },
+                    "type": "SharedResources",
                 }
             }
-        payload: dict[str, Any] = {
-            "config": json.dumps(report_config),
-            "layoutOptimization": 0,
-            "pods": [_emit_pod(p, i) for i, p in enumerate(self.pages)],
-            "sections": [_emit_section(p) for p in self.pages],
+        payload["objects"] = {
+            "section": [
+                {
+                    "properties": {
+                        "verticalAlignment": {"expr": {"Literal": {"Value": "'Top'"}}}
+                    }
+                }
+            ]
         }
         if self.theme is not None:
             payload["resourcePackages"] = [
                 {
-                    "resourcePackage": {
-                        "disabled": False,
-                        "items": [
-                            {
-                                "name": self.theme.name,
-                                "path": f"BaseThemes/{self.theme.name}.json",
-                                "type": 202,
-                            }
-                        ],
-                        "name": "SharedResources",
-                        "type": 2,
-                    }
+                    "name": "SharedResources",
+                    "type": "SharedResources",
+                    "items": [
+                        {
+                            "name": self.theme.name,
+                            "path": f"BaseThemes/{self.theme.name}.json",
+                            "type": "BaseTheme",
+                        }
+                    ],
                 }
             ]
+        payload["settings"] = {
+            "useStylableVisualContainerHeader": True,
+            "exportDataMode": "AllowSummarized",
+            "defaultDrillFilterOtherVisuals": True,
+            "allowChangeFilterTypes": True,
+            "useEnhancedTooltips": True,
+            "useDefaultAggregateDisplayName": True,
+        }
         return json.dumps(payload, indent=2)
+
+    def _emit_pages_json(self) -> str:
+        return json.dumps(
+            {
+                "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/pagesMetadata/1.1.0/schema.json",
+                "pageOrder": [p.name for p in self.pages],
+                "activePageName": self.pages[0].name if self.pages else "",
+            },
+            indent=2,
+        )
 
 
 # ── Internal: id helpers ───────────────────────────────────────────────────
@@ -561,569 +583,235 @@ def _id20(*parts: str) -> str:
     return uuid.uuid5(_REPORT_NS, ".".join(parts)).hex[:20]
 
 
-def _theme_color_solid(c: ThemeColor) -> dict[str, Any]:
-    """The ``{solid: {color: {expr: {ThemeDataColor: ...}}}}`` wrapper Power BI uses for theme color refs."""
+def _num(value: float) -> float | int:
+    """Whole numbers emit as ints (``0`` not ``0.0``); fractions stay floats.
+
+    Matches Fabric's PBIR position output, where un-dragged coordinates
+    are JSON integers and drag values are floats.
+    """
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+# ── Internal: page / visual emitters ───────────────────────────────────────
+
+
+def _emit_page_json(page: Page) -> str:
+    return json.dumps(
+        {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+            "name": page.name,
+            "displayName": page.display_name,
+            "displayOption": page.display_option,
+            "height": _num(page.height),
+            "width": _num(page.width),
+        },
+        indent=2,
+    )
+
+
+def _emit_visual_json(v: Visual) -> str:
+    return json.dumps(
+        {
+            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+            "name": v.name,
+            "position": _emit_position(v.position),
+            "visual": _emit_visual_body(v),
+            "filterConfig": _emit_filter_config(v),
+        },
+        indent=2,
+    )
+
+
+def _emit_position(p: Position) -> dict[str, Any]:
+    tab_order = p.tab_order if p.tab_order is not None else int(p.z)
     return {
-        "solid": {
-            "color": {
-                "expr": {
-                    "ThemeDataColor": {
-                        "ColorId": c.color_id,
-                        "Percent": c.percent,
-                    }
-                }
+        "x": _num(p.x),
+        "y": _num(p.y),
+        "z": _num(p.z),
+        "height": _num(p.height),
+        "width": _num(p.width),
+        "tabOrder": tab_order,
+    }
+
+
+def _emit_visual_body(v: Visual) -> dict[str, Any]:
+    """Dispatch to the per-visual ``visual`` body emitter."""
+    if isinstance(v, Slicer):
+        return _emit_slicer_body(v)
+    if isinstance(v, Table):
+        return _emit_table_body(v)
+    if isinstance(v, (Card, MultiCard)):
+        raise NotImplementedError(
+            f"{type(v).__name__} PBIR emit not yet implemented — needs reference bytes"
+        )
+    raise TypeError(f"unsupported visual type: {type(v).__name__}")
+
+
+# ── Field-reference shapes (modern PBIR) ────────────────────────────────────
+
+
+def _field_ref(ref: Column | Measure) -> dict[str, Any]:
+    """The ``field.{Column|Measure}.Expression.SourceRef.Entity`` shape.
+
+    Modern PBIR references an entity directly — no From/Select alias
+    machinery (that was the legacy prototype-query form).
+    """
+    kind = "Measure" if isinstance(ref, Measure) else "Column"
+    return {
+        "field": {
+            kind: {
+                "Expression": {"SourceRef": {"Entity": ref.entity}},
+                "Property": ref.name,
             }
         }
     }
 
 
-# ── Internal: section / pod emitters ───────────────────────────────────────
+def _projection(ref: Column | Measure) -> dict[str, Any]:
+    """A ``query.queryState.Values.projections[]`` entry."""
+    proj = _field_ref(ref)
+    proj["queryRef"] = f"{ref.entity}.{ref.name}"
+    proj["nativeQueryRef"] = ref.name
+    return proj
 
 
-def _emit_pod(page: Page, index: int) -> dict[str, Any]:
-    """One ``pods[]`` entry binds a page to its rendering surface."""
-    return {
-        "boundSection": page.name,
-        "config": "{}",
-        "name": _id20("pod", page.name),
-        "referenceScope": 1,
-    }
-
-
-def _emit_section(page: Page) -> dict[str, Any]:
-    """A PBIR-Legacy section (the JSON for one page)."""
-    return {
-        "config": "{}",
-        "displayName": page.display_name,
-        "displayOption": 1,
-        "filters": "[]",
-        "height": page.height,
-        "name": page.name,
-        "visualContainers": [_emit_visual_container(v) for v in page.visuals],
-        "width": page.width,
-    }
-
-
-def _emit_visual_container(v: Visual) -> dict[str, Any]:
-    """The outer wrapper for a visual; the inner ``config`` is stringified JSON."""
-    return {
-        "config": json.dumps(_emit_visual_config(v)),
-        "filters": "[]",
-        "height": v.position.height,
-        "width": v.position.width,
-        "x": v.position.x,
-        "y": v.position.y,
-        "z": v.position.z,
-    }
-
-
-def _emit_visual_config(v: Visual) -> dict[str, Any]:
-    """Dispatch to the per-visual emitter."""
-    if isinstance(v, Slicer):
-        return _emit_slicer_config(v)
-    if isinstance(v, Card):
-        return _emit_card_config(v)
-    if isinstance(v, MultiCard):
-        return _emit_multicard_config(v)
-    if isinstance(v, Table):
-        return _emit_table_config(v)
-    raise TypeError(f"unsupported visual type: {type(v).__name__}")
-
-
-def _layout_block(v: Visual) -> list[dict[str, Any]]:
-    """Standard ``layouts`` block with the visual's position."""
-    return [
-        {
-            "id": 0,
-            "position": {
-                "x": v.position.x,
-                "y": v.position.y,
-                "z": v.position.z,
-                "width": v.position.width,
-                "height": v.position.height,
-                "tabOrder": v.position.tab_order or int(v.position.z),
-            },
-        }
-    ]
+def _projectable(ref: FieldRef) -> Column | Measure:
+    """Narrow a field ref to a projectable one, or raise for un-attested kinds."""
+    if isinstance(ref, Aggregate):
+        raise NotImplementedError(
+            "inline Aggregate projection has no attested PBIR shape — "
+            "use a model measure or capture reference bytes"
+        )
+    return ref
 
 
 # ── Slicer emitter ──────────────────────────────────────────────────────────
 
 
-def _emit_slicer_config(s: Slicer) -> dict[str, Any]:
+def _emit_slicer_body(s: Slicer) -> dict[str, Any]:
     levels = s.field_levels
-    leaf = s.leaf_field
-    # All slicer levels must come from the same entity (Power BI doesn't
-    # render cross-entity hierarchies in a single slicer). Validate up
-    # front rather than emit silently broken JSON.
     entities = {c.entity for c in levels}
     if len(entities) > 1:
         raise ValueError(
             f"Slicer hierarchy levels must share an entity; got {sorted(entities)}"
         )
-    src = leaf.entity[0] or "d"
-    # Hierarchy slicers only render correctly in Basic mode.
-    mode: SlicerMode = "Basic" if s.is_hierarchy else s.mode
-
-    objects: dict[str, Any] = {
-        "data": [
-            {"properties": {"mode": {"expr": {"Literal": {"Value": f"'{mode}'"}}}}}
-        ]
-    }
+    # These two knobs are accepted for source compatibility but have no
+    # attested modern-PBIR bytes yet, so they are dropped rather than
+    # guessed. Warn loudly — silently emitting a slicer that ignores a
+    # caller's scoping intent is exactly the failure class this migration
+    # set out to remove. See the module docstring's "PBIR shapes that
+    # still need a UI capture" note.
+    if s.mode != "Dropdown":
+        log.warning(
+            "Slicer mode ignored — listSlicer has no attested PBIR mode bytes; "
+            "emitting a plain listSlicer (needs UI capture to support modes)",
+            slicer=s.name,
+            requested_mode=s.mode,
+        )
     if s.allow_values:
-        objects["general"] = [
-            {
-                "properties": {
-                    "filter": {
-                        "filter": {
-                            "Version": 2,
-                            "From": [{"Name": src, "Entity": leaf.entity, "Type": 0}],
-                            "Where": [
-                                {
-                                    "Condition": {
-                                        "In": {
-                                            "Expressions": [
-                                                {
-                                                    "Column": {
-                                                        "Expression": {
-                                                            "SourceRef": {"Source": src}
-                                                        },
-                                                        "Property": leaf.name,
-                                                    }
-                                                }
-                                            ],
-                                            "Values": [
-                                                [{"Literal": {"Value": f"'{v}'"}}]
-                                                for v in s.allow_values
-                                            ],
-                                        }
-                                    }
-                                }
-                            ],
-                        }
-                    }
-                }
-            }
-        ]
-
-    inner: dict[str, Any] = {
-        "name": s.name,
-        "layouts": _layout_block(s),
-        "singleVisual": {
-            "visualType": "slicer",
-            "projections": {
-                "Values": [
-                    {"queryRef": f"{c.entity}.{c.name}", "active": True} for c in levels
-                ]
-            },
-            "prototypeQuery": {
-                "Version": 2,
-                "From": [{"Name": src, "Entity": leaf.entity, "Type": 0}],
-                "Select": [_select_column(c, src) for c in levels],
-            },
-            "drillFilterOtherVisuals": True,
-            "objects": objects,
-        },
-    }
-    if s.is_hierarchy:
-        # Default to all levels collapsed; users wanting a preselected
-        # expansion path should customize in Desktop after first save.
-        inner["singleVisual"]["expansionStates"] = [
-            {
-                "roles": ["Values"],
-                "levels": [
-                    {
-                        "queryRefs": [f"{c.entity}.{c.name}"],
-                        "isCollapsed": True,
-                    }
-                    for c in levels
-                ],
-                "root": {"identityValues": None, "children": []},
-            }
-        ]
-    return inner
-
-
-# ── Card (single-metric) emitter ───────────────────────────────────────────
-
-
-def _emit_card_config(c: Card) -> dict[str, Any]:
-    src = c.measure.entity[0] or "f"
-    full_name = f"{c.measure.entity}.{c.measure.name}"
-    objects: dict[str, Any] = {
-        "value": [
-            {
-                "properties": {
-                    "displayUnits": {
-                        "expr": {
-                            "Literal": {
-                                "Value": _DISPLAY_UNITS_LITERAL[c.display_units]
-                            }
-                        }
-                    }
-                },
-                "selector": {"id": "default"},
-            }
-        ]
-    }
-    column_properties: dict[str, Any] = {}
-    if c.measure.format_string:
-        column_properties[full_name] = {"formatString": c.measure.format_string}
-    inner: dict[str, Any] = {
-        "name": c.name,
-        "layouts": _layout_block(c),
-        "singleVisual": {
-            "visualType": "cardVisual",
-            "projections": {"Data": [{"queryRef": full_name}]},
-            "prototypeQuery": {
-                "Version": 2,
-                "From": [{"Name": src, "Entity": c.measure.entity, "Type": 0}],
-                "Select": [_select_measure(c.measure, src)],
-            },
-            "columnProperties": column_properties,
-            "drillFilterOtherVisuals": True,
-            "objects": objects,
-        },
-    }
-    if c.title is not None:
-        inner["singleVisual"]["vcObjects"] = {
-            "title": [
-                {
-                    "properties": {
-                        "show": {"expr": {"Literal": {"Value": "true"}}},
-                        "text": {"expr": {"Literal": {"Value": f"'{c.title}'"}}},
-                    }
-                }
-            ]
-            if c.title
-            else [{"properties": {"show": {"expr": {"Literal": {"Value": "false"}}}}}]
-        }
-    return inner
-
-
-# ── MultiCard emitter ──────────────────────────────────────────────────────
-
-
-def _emit_multicard_config(mc: MultiCard) -> dict[str, Any]:
-    if not mc.measures:
-        raise ValueError("MultiCard requires at least one measure")
-    src = mc.measures[0].entity[0] or "f"
-    entity = mc.measures[0].entity
-    if any(m.entity != entity for m in mc.measures):
-        raise ValueError("MultiCard measures must all live on the same entity (table)")
-
-    projections = [{"queryRef": f"{m.entity}.{m.name}"} for m in mc.measures]
-    select = [_select_measure(m, src) for m in mc.measures]
-    column_properties = {
-        f"{m.entity}.{m.name}": {"formatString": m.format_string}
-        for m in mc.measures
-        if m.format_string
-    }
-
-    # `referenceLabel` properties: one entry per measure with its
-    # measure-expression value. This is the per-tile binding the
-    # multi-card layout uses (in addition to `projections`).
-    reference_label = [
-        {
-            "properties": {
-                "value": {
-                    "expr": {
-                        "Measure": {
-                            "Expression": {"SourceRef": {"Entity": m.entity}},
-                            "Property": m.name,
-                        }
-                    }
-                }
-            },
-            "selector": {
-                "data": [{"dataViewWildcard": {"matchingOption": 0}}],
-                "metadata": f"{m.entity}.{m.name}",
-                "id": _id20("ref", mc.name, m.name),
-                "order": 0,
-            },
-        }
-        for m in mc.measures
-    ]
-    reference_label_value = [
-        {
-            "properties": {
-                "valueDisplayUnits": {
-                    "expr": {
-                        "Literal": {"Value": _DISPLAY_UNITS_LITERAL[mc.display_units]}
-                    }
-                }
-            },
-            "selector": {
-                "metadata": f"{m.entity}.{m.name}",
-                "id": _id20("ref", mc.name, m.name),
-            },
-        }
-        for m in mc.measures
-    ]
-    # Hide the auto-generated reference-label titles per measure so the
-    # tile shows the value cleanly.
-    reference_label_title = [
-        {
-            "properties": {"show": {"expr": {"Literal": {"Value": "false"}}}},
-            "selector": {"metadata": f"{m.entity}.{m.name}"},
-        }
-        for m in mc.measures
-    ]
-
-    objects: dict[str, Any] = {
-        "layout": [
-            {
-                "properties": {
-                    "style": {"expr": {"Literal": {"Value": "'Cards'"}}},
-                    "orientation": {"expr": {"Literal": {"Value": "2D"}}},
-                }
-            }
-        ],
-        "referenceLabel": reference_label,
-        "referenceLabelTitle": reference_label_title,
-        "referenceLabelValue": reference_label_value,
-        "referenceLabelLayout": [
-            {
-                "properties": {
-                    "horizontalAlignment": {"expr": {"Literal": {"Value": "'center'"}}},
-                    "verticalAlignment": {"expr": {"Literal": {"Value": "'middle'"}}},
-                    "arrangement": {
-                        "expr": {"Literal": {"Value": f"'{mc.arrangement}'"}}
-                    },
-                },
-                "selector": {"id": "default"},
-            }
-        ],
-    }
-    if mc.show_outline:
-        objects["outline"] = [
-            {
-                "properties": {"show": {"expr": {"Literal": {"Value": "true"}}}},
-                "selector": {"id": "default"},
-            }
-        ]
-    if mc.show_accent_bar:
-        objects["accentBar"] = [
-            {
-                "properties": {"show": {"expr": {"Literal": {"Value": "true"}}}},
-                "selector": {"id": "default"},
-            }
-        ]
-    if mc.show_shadow:
-        objects["shadowCustom"] = [
-            {
-                "properties": {"show": {"expr": {"Literal": {"Value": "true"}}}},
-                "selector": {"id": "default"},
-            }
-        ]
-
-    # Label styling for the per-tile measure-name text. Only emit when
-    # the user set at least one knob; otherwise leave Power BI defaults.
-    if any(
-        v is not None
-        for v in (mc.label_heading, mc.label_position, mc.label_font_color)
-    ):
-        label_props: dict[str, Any] = {"show": {"expr": {"Literal": {"Value": "true"}}}}
-        if mc.label_heading is not None:
-            label_props["heading"] = {
-                "expr": {"Literal": {"Value": f"'{mc.label_heading}'"}}
-            }
-        if mc.label_position is not None:
-            label_props["position"] = {
-                "expr": {"Literal": {"Value": f"'{mc.label_position}'"}}
-            }
-        if mc.label_font_color is not None:
-            label_props["fontColor"] = _theme_color_solid(mc.label_font_color)
-        objects["label"] = [{"properties": label_props, "selector": {"id": "default"}}]
-
+        log.warning(
+            "Slicer allow_values ignored — the hardcoded allow-list filter has "
+            "no attested PBIR bytes yet; the slicer will NOT be scoped to those "
+            "values (needs UI capture)",
+            slicer=s.name,
+            allow_values=s.allow_values,
+        )
+    projections = []
+    for i, col in enumerate(levels):
+        proj = _projection(col)
+        proj["active"] = i == 0
+        projections.append(proj)
     return {
-        "name": mc.name,
-        "layouts": _layout_block(mc),
-        "singleVisual": {
-            "visualType": "cardVisual",
-            "projections": {"Data": projections},
-            "prototypeQuery": {
-                "Version": 2,
-                "From": [{"Name": src, "Entity": entity, "Type": 0}],
-                "Select": select,
-            },
-            "columnProperties": column_properties,
-            "drillFilterOtherVisuals": True,
-            "objects": objects,
-            "vcObjects": {
-                "title": [
-                    {"properties": {"show": {"expr": {"Literal": {"Value": "false"}}}}}
-                ]
-            },
-        },
+        "visualType": "listSlicer",
+        "query": {"queryState": {"Values": {"projections": projections}}},
+        "drillFilterOtherVisuals": True,
     }
 
 
 # ── Table emitter ──────────────────────────────────────────────────────────
 
 
-def _emit_table_config(t: Table) -> dict[str, Any]:
+def _emit_table_body(t: Table) -> dict[str, Any]:
     if not t.fields:
         raise ValueError("Table requires at least one field")
+    projectables = [_projectable(f) for f in t.fields]
 
-    # Build From clause: one alias per distinct entity referenced.
-    entities: dict[str, str] = {}  # entity -> alias
-
-    def _alias(entity: str) -> str:
-        if entity not in entities:
-            entities[entity] = f"t{len(entities)}"
-        return entities[entity]
-
-    select_clauses = []
-    projections = []
-    column_properties: dict[str, Any] = {}
-    for f in t.fields:
-        if isinstance(f, Column):
-            alias = _alias(f.entity)
-            select_clauses.append(_select_column(f, alias))
-            projections.append({"queryRef": f"{f.entity}.{f.name}"})
-            if f.format_string:
-                column_properties[f"{f.entity}.{f.name}"] = {
-                    "formatString": f.format_string
-                }
-        elif isinstance(f, Measure):
-            alias = _alias(f.entity)
-            select_clauses.append(_select_measure(f, alias))
-            projections.append({"queryRef": f"{f.entity}.{f.name}"})
-            if f.format_string:
-                column_properties[f"{f.entity}.{f.name}"] = {
-                    "formatString": f.format_string
-                }
-        else:  # Aggregate
-            alias = _alias(f.entity)
-            select_clauses.append(_select_aggregate(f, alias))
-            ref_name = _aggregate_ref_name(f)
-            projections.append({"queryRef": ref_name})
-            if f.format_string:
-                column_properties[ref_name] = {"formatString": f.format_string}
-
-    from_clauses = [
-        {"Name": alias, "Entity": entity, "Type": 0}
-        for entity, alias in entities.items()
-    ]
-
-    prototype_query: dict[str, Any] = {
-        "Version": 2,
-        "From": from_clauses,
-        "Select": select_clauses,
+    query: dict[str, Any] = {
+        "queryState": {
+            "Values": {"projections": [_projection(f) for f in projectables]}
+        }
     }
     if t.order_by is not None:
-        prototype_query["OrderBy"] = [_order_by_clause(t.order_by, _alias)]
+        query["sortDefinition"] = {"sort": [_sort_entry(t.order_by)]}
 
-    return {
-        "name": t.name,
-        "layouts": _layout_block(t),
-        "singleVisual": {
-            "visualType": "tableEx",
-            "projections": {"Values": projections},
-            "prototypeQuery": prototype_query,
-            "columnProperties": column_properties,
-            "drillFilterOtherVisuals": True,
-        },
+    body: dict[str, Any] = {
+        "visualType": "tableEx",
+        "query": query,
     }
-
-
-# ── Internal: prototype-query Select / OrderBy clause builders ─────────────
-
-
-def _select_column(c: Column, alias: str) -> dict[str, Any]:
-    return {
-        "Column": {
-            "Expression": {"SourceRef": {"Source": alias}},
-            "Property": c.name,
-        },
-        "Name": f"{c.entity}.{c.name}",
-    }
-
-
-def _select_measure(m: Measure, alias: str) -> dict[str, Any]:
-    return {
-        "Measure": {
-            "Expression": {"SourceRef": {"Source": alias}},
-            "Property": m.name,
-        },
-        "Name": f"{m.entity}.{m.name}",
-        "NativeReferenceName": m.name,
-    }
-
-
-def _select_aggregate(a: Aggregate, alias: str) -> dict[str, Any]:
-    return {
-        "Aggregation": {
-            "Expression": {
-                "Column": {
-                    "Expression": {"SourceRef": {"Source": alias}},
-                    "Property": a.column,
-                }
-            },
-            "Function": _AGG_FN_INDEX[a.function],
-        },
-        "Name": _aggregate_ref_name(a),
-        "NativeReferenceName": f"{_AGG_FN_LABEL[a.function]} of {a.column}",
-    }
-
-
-def _order_by_clause(ob: TableOrderBy, alias_lookup: Any) -> dict[str, Any]:
-    direction = _SORT_DIR_INDEX[ob.direction]
-    f = ob.field
-    if isinstance(f, Column):
-        alias = alias_lookup(f.entity)
-        return {
-            "Direction": direction,
-            "Expression": {
-                "Column": {
-                    "Expression": {"SourceRef": {"Source": alias}},
-                    "Property": f.name,
-                }
-            },
-        }
-    if isinstance(f, Measure):
-        alias = alias_lookup(f.entity)
-        return {
-            "Direction": direction,
-            "Expression": {
-                "Measure": {
-                    "Expression": {"SourceRef": {"Source": alias}},
-                    "Property": f.name,
-                }
-            },
-        }
-    # Aggregate
-    alias = alias_lookup(f.entity)
-    return {
-        "Direction": direction,
-        "Expression": {
-            "Aggregation": {
-                "Expression": {
-                    "Column": {
-                        "Expression": {"SourceRef": {"Source": alias}},
-                        "Property": f.column,
+    if t.title is not None:
+        body["visualContainerObjects"] = {
+            "title": [
+                {
+                    "properties": {
+                        "show": {"expr": {"Literal": {"Value": "true"}}},
+                        "text": {
+                            "expr": {
+                                "Measure": {
+                                    "Expression": {
+                                        "SourceRef": {"Entity": t.title.entity}
+                                    },
+                                    "Property": t.title.name,
+                                }
+                            }
+                        },
                     }
-                },
-                "Function": _AGG_FN_INDEX[f.function],
-            }
-        },
-    }
+                }
+            ]
+        }
+    body["drillFilterOtherVisuals"] = True
+    return body
 
 
-# Capitalized labels used in NativeReferenceName for aggregates
-# (e.g. "Sum of missing_field_count") — matches what Power BI emits.
-_AGG_FN_LABEL: dict[AggregationFunction, str] = {
-    "sum": "Sum",
-    "avg": "Average",
-    "min": "Min",
-    "max": "Max",
-    "count": "Count",
-    "distinctCount": "Count (Distinct)",
-}
+def _sort_entry(ob: TableOrderBy) -> dict[str, Any]:
+    if not isinstance(ob.field, Column):
+        raise NotImplementedError(
+            "sort-by-measure/aggregate has no attested PBIR shape — "
+            "sort by a column or capture reference bytes"
+        )
+    entry = _field_ref(ob.field)
+    entry["direction"] = _SORT_DIRECTION[ob.direction]
+    return entry
 
 
-def _aggregate_ref_name(a: Aggregate) -> str:
-    """The queryRef name for an aggregate column, e.g. ``Sum(table.col)``."""
-    cap = _AGG_FN_LABEL[a.function].split(" ")[0]
-    return f"{cap}({a.entity}.{a.column})"
+# ── filterConfig (one filter per projected field) ──────────────────────────
+
+
+def _emit_filter_config(v: Visual) -> dict[str, Any]:
+    """One ``filterConfig.filters[]`` entry per projected field.
+
+    Columns use ``type:"Categorical"``; measures use ``type:"Advanced"``
+    (matches the reference reports). Filter ``name`` ids are derived
+    deterministically from the visual name + property so output is
+    byte-stable across saves.
+    """
+    fields = _filterable_fields(v)
+    filters = []
+    for ref in fields:
+        entry = _field_ref(ref)
+        entry_with_name: dict[str, Any] = {"name": _id20(v.name, ref.entity, ref.name)}
+        entry_with_name.update(entry)
+        entry_with_name["type"] = (
+            "Advanced" if isinstance(ref, Measure) else "Categorical"
+        )
+        filters.append(entry_with_name)
+    return {"filters": filters}
+
+
+def _filterable_fields(v: Visual) -> list[Column | Measure]:
+    if isinstance(v, Slicer):
+        return list(v.field_levels)
+    if isinstance(v, Table):
+        return [_projectable(f) for f in v.fields]
+    return []
