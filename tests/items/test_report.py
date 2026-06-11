@@ -559,7 +559,9 @@ class TestTheme:
             "rpt", "../x.SemanticModel", [page], strict_descriptions=False
         ).save_to_disk(tmp_path)
         rj = _load_report_json(tmp_path / "rpt.Report")
-        assert "resourcePackages" not in rj
+        # ``resourcePackages`` is always present (Fabric emits ``[]`` even
+        # without a theme — see issue #106); with no theme it's empty.
+        assert rj["resourcePackages"] == []
         config = json.loads(rj["config"])
         assert "themeCollection" not in config
 
@@ -783,3 +785,176 @@ class TestStrictDescriptions:
                 pages=[basic_page],
                 description="   ",
             ).save_to_disk(tmp_path)
+
+
+# ── Canonical-bytes (no git-sync flap) — issue #106 ────────────────────────
+
+
+class TestCanonicalBytes:
+    """The four byte-canonicalisation fixes from issue #106.
+
+    Fabric rewrites a freshly-built report.json/.platform on first
+    git-sync unless the builder emits its canonical bytes up front:
+    Report .platform drops its description; report.json carries a
+    top-level ``resourcePackages``; layout numbers serialize as
+    2-decimal floats; visualContainers are sorted by name.
+    """
+
+    def test_platform_has_no_description(
+        self, report_minimal: Report, tmp_path: Path
+    ) -> None:
+        # Report fixture HAS a description (it's validated/required), but
+        # Fabric strips it from the Report .platform — so the builder must
+        # not emit it. The Report.description field itself stays set.
+        assert report_minimal.description
+        item_dir = report_minimal.save_to_disk(tmp_path)
+        platform = json.loads((item_dir / ".platform").read_text("utf-8"))
+        assert "description" not in platform["metadata"]
+        # Other metadata is unaffected.
+        assert platform["metadata"]["displayName"] == "rpt_test"
+
+    def test_report_json_always_has_resource_packages(
+        self, report_minimal: Report, tmp_path: Path
+    ) -> None:
+        # Present even with no theme (Fabric writes ``"resourcePackages": []``).
+        item_dir = report_minimal.save_to_disk(tmp_path)
+        rj = _load_report_json(item_dir)
+        assert rj["resourcePackages"] == []
+        # ...and ordered between ``pods`` and ``sections``.
+        keys = list(rj.keys())
+        assert keys.index("pods") < keys.index("resourcePackages")
+        assert keys.index("resourcePackages") < keys.index("sections")
+
+    def test_resource_packages_populated_when_theme_present(
+        self, tmp_path: Path
+    ) -> None:
+        theme = Theme(name="MyTheme", content={"name": "MyTheme", "dataColors": []})
+        page = Page(
+            display_name="P",
+            visuals=[
+                Card(
+                    position=Position(x=0, y=0, width=200, height=120),
+                    measure=Measure("fact_x", "M"),
+                ),
+            ],
+        )
+        Report(
+            "rpt", "../x.SemanticModel", [page], theme=theme, strict_descriptions=False
+        ).save_to_disk(tmp_path)
+        rj = _load_report_json(tmp_path / "rpt.Report")
+        assert (
+            rj["resourcePackages"][0]["resourcePackage"]["items"][0]["name"]
+            == "MyTheme"
+        )
+
+    def test_layout_numbers_render_as_two_decimal_floats(self, tmp_path: Path) -> None:
+        page = Page(
+            display_name="P",
+            width=1280,
+            height=720,
+            visuals=[
+                Card(
+                    position=Position(x=16, y=110, width=720, height=120),
+                    measure=Measure("fact_x", "M"),
+                    name="card_a",
+                ),
+            ],
+        )
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
+        # Assert on the RAW serialized text — parsed JSON gives 720.0 == 720
+        # which would not catch int-vs-N.00.
+        raw = (tmp_path / "rpt.Report" / "report.json").read_text("utf-8")
+        # Section dimensions.
+        assert '"height": 720.00,' in raw
+        assert '"width": 1280.00' in raw
+        # VisualContainer position fields.
+        assert '"height": 120.00,' in raw
+        assert '"width": 720.00,' in raw
+        assert '"x": 16.00,' in raw
+        assert '"y": 110.00,' in raw
+        assert '"z": 0.00' in raw
+        # No bare ints / single-decimal for these structured fields.
+        assert '"height": 720,' not in raw
+        assert '"x": 16,' not in raw
+        assert '"z": 0.0,' not in raw and '"z": 0,' not in raw
+
+    def test_config_string_numbers_not_floated(self, tmp_path: Path) -> None:
+        # The SAME layout numbers live inside the escaped ``config`` string
+        # (the visual's ``layouts`` block). Those must stay exactly as the
+        # builder writes them (ints / 0.0), NOT floated to N.00 — proving
+        # the float pass never reaches into the config string.
+        page = Page(
+            display_name="P",
+            visuals=[
+                Card(
+                    position=Position(x=16, y=110, width=720, height=120),
+                    measure=Measure("fact_x", "M"),
+                    name="card_a",
+                ),
+            ],
+        )
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
+        raw = (tmp_path / "rpt.Report" / "report.json").read_text("utf-8")
+        # Escaped (inside config string) x/width must NOT be floated.
+        assert '\\"x\\": 16,' in raw
+        assert '\\"width\\": 720,' in raw
+        assert '\\"x\\": 16.00' not in raw
+        # The inner layout dict itself round-trips with the original numbers.
+        cfg = _visual_configs(_load_report_json(tmp_path / "rpt.Report"))[0]
+        pos = cfg["layouts"][0]["position"]
+        assert pos["x"] == 16
+        assert pos["width"] == 720
+
+    def test_non_layout_ints_stay_ints(self, tmp_path: Path) -> None:
+        # Guard against a "float everything numeric" over-reach: structural
+        # ints must remain ints in the serialized text.
+        page = Page(
+            display_name="P",
+            visuals=[
+                Card(
+                    position=Position(x=0, y=0, width=200, height=120),
+                    measure=Measure("fact_x", "M"),
+                    name="card_a",
+                ),
+            ],
+        )
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
+        raw = (tmp_path / "rpt.Report" / "report.json").read_text("utf-8")
+        assert '"layoutOptimization": 0' in raw
+        assert '"displayOption": 1' in raw
+
+    def test_visual_containers_sorted_by_name(self, tmp_path: Path) -> None:
+        # Insertion order is slicer-then-card, but the slicer's name sorts
+        # AFTER the card's — Fabric reorders alphabetically by visual name,
+        # so the emitter must too.
+        page = Page(
+            display_name="P",
+            visuals=[
+                Slicer(
+                    position=Position(x=0, y=0, width=200, height=80),
+                    field=Column("dim", "region"),
+                    name="slicer_zzz",
+                ),
+                Card(
+                    position=Position(x=0, y=100, width=200, height=120),
+                    measure=Measure("fact_x", "M"),
+                    name="card_aaa",
+                ),
+            ],
+        )
+        Report(
+            "rpt", "../x.SemanticModel", [page], strict_descriptions=False
+        ).save_to_disk(tmp_path)
+        rj = _load_report_json(tmp_path / "rpt.Report")
+        names = [
+            json.loads(v["config"])["name"]
+            for v in rj["sections"][0]["visualContainers"]
+        ]
+        assert names == sorted(names)
+        assert names == ["card_aaa", "slicer_zzz"]

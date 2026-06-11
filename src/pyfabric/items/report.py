@@ -80,6 +80,7 @@ Usage::
 """
 
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -90,6 +91,44 @@ import structlog
 from pyfabric.items.normalize import write_artifact_file
 
 log = structlog.get_logger()
+
+
+# ── Internal: 2-decimal float serialization ────────────────────────────────
+#
+# Fabric writes the *structured top-level* layout fields of a section /
+# visualContainer (``width`` / ``height`` / ``x`` / ``y`` / ``z``) as
+# 2-decimal floats — ``720.00``, ``16.00``, ``0.00`` — not ``720`` or
+# ``0.0``. ``json.dumps(720.0)`` yields ``720.0``, so we can't get there
+# with the stdlib encoder directly. The numbers embedded inside the
+# escaped ``config`` string must stay exactly as the builder writes them,
+# so a blanket regex over the whole document is unsafe.
+#
+# Approach: wrap only those five values in ``_Float2``; a custom encoder
+# emits a unique quoted token for each; a single post-pass unquotes the
+# tokens. The token only ever appears for wrapped values, so the config
+# string is never touched.
+
+
+@dataclass(frozen=True)
+class _Float2:
+    """Marker for a layout number that must serialize as ``N.00``."""
+
+    value: float
+
+
+_F2_TOKEN = re.compile(r'"@@F2:(-?\d+\.\d{2})@@"')
+
+
+class _Float2Encoder(json.JSONEncoder):
+    def default(self, o: Any) -> Any:
+        if isinstance(o, _Float2):
+            return f"@@F2:{o.value:.2f}@@"
+        return super().default(o)
+
+
+def _dumps_with_float2(payload: dict[str, Any]) -> str:
+    text = json.dumps(payload, indent=2, cls=_Float2Encoder)
+    return _F2_TOKEN.sub(r"\1", text)
 
 
 # ── Public types ────────────────────────────────────────────────────────────
@@ -465,13 +504,18 @@ class Report:
     # ── File emitters ──────────────────────────────────────────────────────
 
     def _emit_platform(self) -> str:
+        # NB: no ``description`` for a Report ``.platform``. Fabric strips
+        # it on first git-sync (observed even for a short ~68-char one),
+        # which causes a no-op byte-flap commit. The ``Report.description``
+        # field and ``strict_descriptions`` validation are kept — the
+        # description still surfaces to authors at build time — it just
+        # isn't emitted into the (non-retaining) Report .platform.
         return json.dumps(
             {
                 "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
                 "metadata": {
                     "type": "Report",
                     "displayName": self.name,
-                    **({"description": self.description} if self.description else {}),
                 },
                 "config": {"version": "2.0", "logicalId": self.logical_id},
             },
@@ -527,14 +571,12 @@ class Report:
                     },
                 }
             }
-        payload: dict[str, Any] = {
-            "config": json.dumps(report_config),
-            "layoutOptimization": 0,
-            "pods": [_emit_pod(p, i) for i, p in enumerate(self.pages)],
-            "sections": [_emit_section(p) for p in self.pages],
-        }
+        # ``resourcePackages`` is always present (Fabric adds a top-level
+        # ``"resourcePackages": []`` even when there's no theme) and sits
+        # between ``pods`` and ``sections`` in Fabric's canonical key order.
+        resource_packages: list[dict[str, Any]] = []
         if self.theme is not None:
-            payload["resourcePackages"] = [
+            resource_packages = [
                 {
                     "resourcePackage": {
                         "disabled": False,
@@ -550,7 +592,14 @@ class Report:
                     }
                 }
             ]
-        return json.dumps(payload, indent=2)
+        payload: dict[str, Any] = {
+            "config": json.dumps(report_config),
+            "layoutOptimization": 0,
+            "pods": [_emit_pod(p, i) for i, p in enumerate(self.pages)],
+            "resourcePackages": resource_packages,
+            "sections": [_emit_section(p) for p in self.pages],
+        }
+        return _dumps_with_float2(payload)
 
 
 # ── Internal: id helpers ───────────────────────────────────────────────────
@@ -591,16 +640,26 @@ def _emit_pod(page: Page, index: int) -> dict[str, Any]:
 
 
 def _emit_section(page: Page) -> dict[str, Any]:
-    """A PBIR-Legacy section (the JSON for one page)."""
+    """A PBIR-Legacy section (the JSON for one page).
+
+    ``visualContainers`` are sorted by the visual's ``name`` — Fabric
+    reorders them alphabetically on sync, so emitting them in insertion
+    order causes a byte-flap. The container dict has no top-level ``name``
+    (it lives inside the escaped ``config``), so we sort the source
+    visuals (whose names are assigned before emit) instead.
+    """
     return {
         "config": "{}",
         "displayName": page.display_name,
         "displayOption": 1,
         "filters": "[]",
-        "height": page.height,
+        "height": _Float2(page.height),
         "name": page.name,
-        "visualContainers": [_emit_visual_container(v) for v in page.visuals],
-        "width": page.width,
+        "visualContainers": [
+            _emit_visual_container(v)
+            for v in sorted(page.visuals, key=lambda v: v.name)
+        ],
+        "width": _Float2(page.width),
     }
 
 
@@ -609,11 +668,11 @@ def _emit_visual_container(v: Visual) -> dict[str, Any]:
     return {
         "config": json.dumps(_emit_visual_config(v)),
         "filters": "[]",
-        "height": v.position.height,
-        "width": v.position.width,
-        "x": v.position.x,
-        "y": v.position.y,
-        "z": v.position.z,
+        "height": _Float2(v.position.height),
+        "width": _Float2(v.position.width),
+        "x": _Float2(v.position.x),
+        "y": _Float2(v.position.y),
+        "z": _Float2(v.position.z),
     }
 
 
