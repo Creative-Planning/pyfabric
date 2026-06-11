@@ -36,6 +36,7 @@ import requests
 import structlog
 
 from pyfabric.client.auth import PBI_RESOURCE, FabricCredential
+from pyfabric.client.http import FabricClient, FabricError
 
 log = structlog.get_logger()
 
@@ -120,3 +121,104 @@ def refresh_semantic_model(
                 f"semantic-model refresh did not finish within {timeout}s "
                 f"(last status {status!r})"
             )
+
+
+# ── SQL analytics endpoint metadata refresh (Fabric API) ─────────────────────
+
+_SQL_SYNC_DONE = ("Succeeded", "Completed")
+_SQL_SYNC_FAILED = ("Failed", "Cancelled")
+
+
+def refresh_sql_endpoint_metadata(
+    client: FabricClient,
+    workspace_id: str,
+    sql_endpoint_id: str,
+    *,
+    wait: bool = True,
+    poll_interval: int = 15,
+    timeout: int = 600,
+    on_progress: OnProgress = None,
+) -> dict[str, Any]:
+    """Sync a lakehouse/warehouse SQL analytics endpoint's metadata to Delta.
+
+    The SQL analytics endpoint mirrors the lakehouse Delta tables, but its
+    metadata syncs with a lag. After a Spark/notebook write changes a table's
+    **schema** (e.g. adds a column), a downstream Import semantic model — which
+    reads schema *through this endpoint* (``Lakehouse.Contents``) — will fail to
+    refresh ("column does not exist in the rowset") until the endpoint catches
+    up. Call this between the write and the model refresh to force the sync.
+
+    Unlike :func:`refresh_semantic_model` (Power BI API), this is a Fabric API
+    call, so it takes a :class:`FabricClient`. Returns the per-table sync result
+    set. Raises :class:`RuntimeError` on a failed sync, :class:`TimeoutError` if
+    it doesn't finish within ``timeout``.
+    """
+    url = client._build_url(
+        f"workspaces/{workspace_id}/sqlEndpoints/{sql_endpoint_id}/refreshMetadata"
+    )
+    resp = client.raw_request("POST", url, {"preview": True})
+
+    if resp.status_code in (200, 201):
+        if on_progress:
+            on_progress("Completed")
+        return resp.json() if resp.text else {}
+
+    if resp.status_code != 202:
+        raise FabricError(resp.status_code, resp.text, url)
+
+    location = resp.headers.get("Location")
+    if not location:
+        raise RuntimeError(f"202 from {url} has no Location header")
+    retry_after = int(resp.headers.get("Retry-After", poll_interval))
+    if not wait:
+        return {"status": "Accepted", "location": location}
+
+    deadline = time.monotonic() + timeout
+    while True:
+        time.sleep(retry_after)
+        poll = client.raw_request("GET", location)
+        body = poll.json() if poll.text else {}
+        status = body.get("status", "Unknown")
+        if on_progress:
+            on_progress(status)
+        log.debug("sql_metadata_sync", sql_endpoint_id=sql_endpoint_id, status=status)
+
+        if status in _SQL_SYNC_DONE:
+            return body
+        if status in _SQL_SYNC_FAILED:
+            raise RuntimeError(
+                f"SQL endpoint metadata refresh {status}: {body.get('error', body)}"
+            )
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"SQL endpoint metadata refresh did not finish within {timeout}s "
+                f"(last status {status!r})"
+            )
+        retry_after = min(retry_after, poll_interval)
+
+
+def refresh_lakehouse_sql_metadata(
+    client: FabricClient,
+    workspace_id: str,
+    lakehouse_id: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Resolve a lakehouse's SQL analytics endpoint id, then refresh its metadata.
+
+    Convenience over :func:`refresh_sql_endpoint_metadata` that reads the
+    endpoint id from the lakehouse's ``properties.sqlEndpointProperties.id``.
+    Extra keyword args (``wait``, ``poll_interval``, ``timeout``, ``on_progress``)
+    pass through.
+    """
+    lh = client.get(f"workspaces/{workspace_id}/lakehouses/{lakehouse_id}")
+    sql_endpoint_id = (
+        (lh.get("properties") or {}).get("sqlEndpointProperties") or {}
+    ).get("id")
+    if not sql_endpoint_id:
+        raise RuntimeError(
+            f"lakehouse {lakehouse_id} has no SQL endpoint id "
+            "(properties.sqlEndpointProperties.id)"
+        )
+    return refresh_sql_endpoint_metadata(
+        client, workspace_id, sql_endpoint_id, **kwargs
+    )
