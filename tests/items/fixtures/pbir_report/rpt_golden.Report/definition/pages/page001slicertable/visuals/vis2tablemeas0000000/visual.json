@@ -1,0 +1,101 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+  "name": "vis2tablemeas0000000",
+  "position": {
+    "x": 460,
+    "y": 290,
+    "z": 2,
+    "height": 270,
+    "width": 780,
+    "tabOrder": 2
+  },
+  "visual": {
+    "visualType": "tableEx",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "dim_x"
+                    }
+                  },
+                  "Property": "name"
+                }
+              },
+              "queryRef": "dim_x.name",
+              "nativeQueryRef": "name"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "fact_x"
+                    }
+                  },
+                  "Property": "Total Rows"
+                }
+              },
+              "queryRef": "fact_x.Total Rows",
+              "nativeQueryRef": "Total Rows"
+            }
+          ]
+        }
+      },
+      "sortDefinition": {
+        "sort": [
+          {
+            "field": {
+              "Column": {
+                "Expression": {
+                  "SourceRef": {
+                    "Entity": "dim_x"
+                  }
+                },
+                "Property": "name"
+              }
+            },
+            "direction": "Ascending"
+          }
+        ]
+      }
+    },
+    "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "e5d22a8189815a24a444",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "dim_x"
+              }
+            },
+            "Property": "name"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "8f55b3c7692458d49185",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "fact_x"
+              }
+            },
+            "Property": "Total Rows"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
+  }
+}
