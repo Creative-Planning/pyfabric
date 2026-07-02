@@ -70,6 +70,47 @@ validate_item(Path("ws/da_example.DataAgent"))
 normalize_tree(Path("ws/"), dry_run=True)   # pre-push flap check
 ```
 
+## Querying a published agent: `DataAgentClient`
+
+`pyfabric.testing.data_agent.DataAgentClient` is a thin synchronous
+pass-through over the official `mcp` client — pyfabric adds only the
+house rails (`FabricCredential` token acquisition, URL construction,
+a pytest fixture):
+
+```python
+from pyfabric.testing.data_agent import DataAgentClient
+
+client = DataAgentClient(workspace_id, agent_id)   # az login suffices
+answer = client.ask("What was total revenue last month?")
+```
+
+Install the transport with `pip install pyfabric[dataagent]`. The agent
+must be **published** — Fabric serves the MCP endpoint only for the
+published stage.
+
+The auto-registered `data_agent_client` pytest fixture builds the client
+from `PYFABRIC_DATA_AGENT_WORKSPACE` / `PYFABRIC_DATA_AGENT_ID` and
+skips the test when either is unset, so live suites stay green on
+machines with no published agent reachable.
+
+## Instruction lint
+
+`pyfabric.items.data_agent` applies the `strict_descriptions` posture to
+`aiInstructions`: guardrail categories (objective, grounding, refusal,
+terminology) are linted, and missing ones are surfaced before the
+artifact ships.
+
+```python
+from pyfabric.items.data_agent import lint_data_agent, validate_instructions
+
+lint_data_agent(Path("ws/da_example.DataAgent"))   # finding messages
+validate_instructions(instructions_text)           # raises when missing
+```
+
+`validate_item` runs the lint automatically for DataAgent folders and
+reports findings as warnings (the artifact syncs fine without
+guardrails — the answers just aren't guarded).
+
 ## Validating answer accuracy with pytest
 
 The recommended pattern for guarding against hallucinated answers:

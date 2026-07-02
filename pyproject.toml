@@ -67,11 +67,20 @@ testing = [
     "duckdb>=1.1",
     "pytest>=8.0",
 ]
+# Transport for querying published data agents over their MCP endpoint
+# (pyfabric.testing.data_agent). Floor mcp at 1.23.0: CVE-2025-66416
+# (DNS-rebinding protection off by default for HTTP-based servers) is
+# fixed there — we only use the client side, but the floor keeps
+# resolvers out of the advisory-affected range.
+dataagent = [
+    "mcp>=1.23.0",
+]
 all = [
     "pyfabric[azure]",
     "pyfabric[data]",
     "pyfabric[lakehouse-io]",
     "pyfabric[testing]",
+    "pyfabric[dataagent]",
 ]
 dev = [
     "pyfabric[all]",
@@ -156,9 +165,11 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 
-# Third-party libraries without type stubs
+# Third-party libraries without type stubs. mcp is additionally an
+# optional extra (pyfabric[dataagent]) that isn't installed in the dev
+# env at all — the import lives behind a lazy try/except.
 [[tool.mypy.overrides]]
-module = ["requests.*", "pyodbc.*", "pyarrow.*", "pandas.*", "duckdb.*", "structlog.*", "deltalake.*"]
+module = ["requests.*", "pyodbc.*", "pyarrow.*", "pandas.*", "duckdb.*", "structlog.*", "deltalake.*", "mcp.*"]
 ignore_missing_imports = true
 
 # pyarrow ships partial type info — on Linux, mypy --strict sees
