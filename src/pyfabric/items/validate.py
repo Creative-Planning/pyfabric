@@ -128,6 +128,14 @@ def validate_item(item_dir: Path) -> ValidationResult:
                 )
             )
 
+    # Data agents get an instruction-guardrail lint (warnings, not errors —
+    # the artifact syncs fine without them; the answers just aren't guarded).
+    if platform.metadata.type == "DataAgent":
+        from .data_agent import lint_data_agent
+
+        for message in lint_data_agent(item_dir):
+            result.warnings.append(ValidationError(message, item_dir))
+
     return result
 
 

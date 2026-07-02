@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     import duckdb
     import pyarrow as pa
 
+    from .data_agent import DataAgentClient
+
 
 @pytest.fixture
 def lakehouse_root(tmp_path: Path) -> Path:
@@ -60,6 +62,27 @@ def mock_notebookutils(tmp_path: Path) -> MockNotebookUtils:
     root = tmp_path / "notebookutils"
     root.mkdir(parents=True, exist_ok=True)
     return MockNotebookUtils(root=root)
+
+
+@pytest.fixture
+def data_agent_client() -> DataAgentClient:
+    """DataAgentClient for the published agent named by environment variables.
+
+    Reads ``PYFABRIC_DATA_AGENT_WORKSPACE`` and ``PYFABRIC_DATA_AGENT_ID``
+    and skips the test when either is unset, so live golden-question
+    suites stay green on machines with no published agent reachable.
+    Auth comes from the default ``FabricCredential`` chain (az login /
+    azure.identity).
+    """
+    import os
+
+    from pyfabric.testing.data_agent import ENV_AGENT, ENV_WORKSPACE, DataAgentClient
+
+    workspace_id = os.environ.get(ENV_WORKSPACE)
+    agent_id = os.environ.get(ENV_AGENT)
+    if not workspace_id or not agent_id:
+        pytest.skip(f"{ENV_WORKSPACE} / {ENV_AGENT} not set")
+    return DataAgentClient(workspace_id, agent_id)
 
 
 # ── Test helpers (plain functions, not pytest fixtures) ──────────────────────

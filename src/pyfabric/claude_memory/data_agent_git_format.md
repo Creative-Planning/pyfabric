@@ -39,9 +39,14 @@ datasource GUIDs as Fabric-owned.
 
 **Accuracy validation pattern**: golden-question set (question +
 `ground_truth_sql` + data-type/tolerance); execute the SQL against the
-same lakehouse at test time; ask the published agent via MCP; compare
-with type-aware tolerances; env-gate the live tests. `aiInstructions`
-must carry grounding guardrails (answer only from executed query results;
-"no data found" over estimation; show the query; never invent
-identifiers/amounts; canonical filters; scoped refusal). See
+same lakehouse at test time; ask the published agent via
+`pyfabric.testing.data_agent.DataAgentClient(ws, agent).ask(q)`
+(`pip install pyfabric[dataagent]`; auto-registered `data_agent_client`
+fixture env-gates on `PYFABRIC_DATA_AGENT_WORKSPACE`/`..._ID`); compare
+with type-aware tolerances. `aiInstructions` must carry grounding
+guardrails (answer only from executed query results; "no data found"
+over estimation; show the query; never invent identifiers/amounts;
+canonical filters; scoped refusal) — `pyfabric.items.data_agent`'s
+`validate_instructions` / `lint_data_agent` lint for exactly these, and
+`validate_item` warns on DataAgent folders missing them. See
 `docs/data-agent.md`.
