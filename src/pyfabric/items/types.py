@@ -190,6 +190,20 @@ ITEM_TYPES: dict[str, ItemType] = {
         type_name="Ontology",
         required_files=["definition.json"],
     ),
+    # ── Data Agents ─────────────────────────────────────────────────────
+    # Datasource folders under Files/Config/{draft,published}/ carry
+    # dynamic names (e.g. lakehouse-tables-<name>/datasource.json) and so
+    # can't be listed here. publish_info.json and published/ appear only
+    # after the agent's first publish.
+    "DataAgent": ItemType(
+        type_name="DataAgent",
+        required_files=["Files/Config/data_agent.json"],
+        optional_files=[
+            "Files/Config/publish_info.json",
+            "Files/Config/draft/stage_config.json",
+            "Files/Config/published/stage_config.json",
+        ],
+    ),
     # ── Maps ────────────────────────────────────────────────────────────
     "Map": ItemType(
         type_name="Map",

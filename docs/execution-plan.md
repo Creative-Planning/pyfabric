@@ -131,15 +131,21 @@ issues; file them first so the work is visible.
   Take cues from the JSON shape that Fabric's pipeline designer
   produces; cover the activity types that show up most often in
   production deployments first.
-- **DataAgent builder.** Programmatic data agent definitions paired
-  with the governance memory from Phase D so the default posture is
-  safe.
+- **DataAgent builder: descoped (2026-07).** Microsoft's
+  `fabric-data-agent-sdk` now covers programmatic agent authoring
+  (create, datasources, instructions, example queries, publish) from
+  inside and outside Fabric, so a pyfabric authoring layer would
+  duplicate a first-party SDK. pyfabric's DataAgent scope is git-format
+  validation + byte normalization (shipped with the item-type
+  registration) plus a thin MCP query client and an
+  instruction-guardrail lint — see `docs/data-agent.md` for the
+  adopt-first breakdown.
 
-These are roadmap.md Phase 2 items; promoting them to concrete
-deliverables here once issues are filed.
+DataPipeline is the remaining roadmap.md Phase 2 builder; promote it to
+a concrete deliverable here once its issue is filed.
 
-Done-when: both builders land, both have docs in `docs/api.md`, both
-have at least one example in `examples/`, both are emitted through
+Done-when: the DataPipeline builder lands with docs in `docs/api.md`,
+at least one example in `examples/`, and output emitted through
 `write_artifact_file`.
 
 ## Phase F — Docs + tests cleanup

@@ -31,7 +31,9 @@ Expand supported Fabric item types:
 - **Dataflow Gen2** — mashup/Power Query authoring support
 - **Pipelines** — activity graph authoring (notebook activities, copy
   activities, orchestration)
-- **Data Agents** — programmatic data agent definitions
+- **Data Agents** — git-format validation + byte normalization only;
+  authoring is delegated to Microsoft's `fabric-data-agent-sdk` (see
+  `docs/data-agent.md`)
 - **Lakehouses** — add new tables with schemas and data (not just the lakehouse
   shell)
 - Integration with Workspace Identity and Azure Key Vault for secure ETL/ELT
