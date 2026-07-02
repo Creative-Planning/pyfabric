@@ -14,7 +14,18 @@ commits directly:
 | ``*.Notebook/notebook-content.sql``           | LF           | Yes (LF)    |
 | ``*.SemanticModel/**/*.tmdl``                 | LF           | Blank (LFLF)|
 | ``*.DataPipeline/pipeline-content.json``      | LF           | No          |
+| ``*.DataAgent/**`` (including ``.platform``)  | CRLF         | No          |
 | everything else in Fabric artifact folders    | LF           | No          |
+
+DataAgent is the one item type Fabric serializes entirely as CRLF —
+**including its ``.platform`` file**, which every other type emits as LF.
+Verified from a Fabric-authored auto-commit ("Committing N items from
+workspace …") covering all seven files of a published data agent
+(``data_agent.json``, ``publish_info.json``, draft + published
+``stage_config.json`` and ``datasource.json``, ``.platform``): every file
+ends ``…\\r\\n}`` with no trailing newline. Single workspace so far — same
+epistemic status as the TMDL trailing-blank-line note below when it was
+first recorded.
 
 SemanticModel ``*.tmdl`` files are the one type Fabric ends with a trailing
 **blank line** (two LF bytes, ``…content\\n\\n``), not zero and not one. Verified
@@ -103,6 +114,8 @@ ARTIFACT_GLOBS: tuple[str, ...] = (
     "*.MirroredDatabase/mirroring.json",
     "*.DataPipeline/.platform",
     "*.DataPipeline/pipeline-content.json",
+    "*.DataAgent/.platform",
+    "*.DataAgent/**/*.json",
 )
 
 # File-type-specific rules. First match wins. Order matters.
@@ -121,6 +134,10 @@ _RULES: tuple[tuple[str, str, bool, bool], ...] = (
     # LF + trailing LF
     ("*.Notebook/notebook-content.py", "\n", True, False),
     ("*.Notebook/notebook-content.sql", "\n", True, False),
+    # CRLF + no trailing — Fabric emits every DataAgent file (even .platform)
+    # as CRLF. A bare ``*`` spans ``/`` under fnmatch, so this one glob covers
+    # .platform and all nested Files/Config/** JSON alike.
+    ("*.DataAgent/*", "\r\n", False, False),
     # LF + trailing BLANK line — Fabric ends every SemanticModel TMDL with "\n\n"
     ("*.SemanticModel/*.tmdl", "\n", False, True),
     # LF + no trailing — default for everything else
@@ -324,5 +341,6 @@ _ITEM_TYPES: frozenset[str] = frozenset(
         "Report",
         "MirroredDatabase",
         "DataPipeline",
+        "DataAgent",
     }
 )

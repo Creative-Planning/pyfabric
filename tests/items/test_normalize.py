@@ -36,6 +36,17 @@ class TestRuleFor:
             # DataPipeline — LF, no trailing newline
             ("pl.DataPipeline/pipeline-content.json", "\n", False),
             ("pl.DataPipeline/.platform", "\n", False),
+            # DataAgent — CRLF, no trailing newline, INCLUDING .platform
+            # (the one item type whose .platform Fabric emits as CRLF)
+            ("da.DataAgent/.platform", "\r\n", False),
+            ("da.DataAgent/Files/Config/data_agent.json", "\r\n", False),
+            ("da.DataAgent/Files/Config/publish_info.json", "\r\n", False),
+            ("da.DataAgent/Files/Config/draft/stage_config.json", "\r\n", False),
+            (
+                "da.DataAgent/Files/Config/published/lakehouse-tables-lh_x/datasource.json",
+                "\r\n",
+                False,
+            ),
             ("any/random/file.txt", "\n", False),
         ],
     )
@@ -255,3 +266,37 @@ class TestNormalizeTree:
         assert (pl / "pipeline-content.json").read_bytes() == (
             b'{\n  "properties": {\n    "activities": []\n  }\n}'
         )
+
+    def test_covers_data_agent(self, tmp_path: Path):
+        # DataAgent artifacts are CRLF + no trailing newline for EVERY file,
+        # .platform included — LF-committed files must be rewritten to CRLF,
+        # and already-canonical Fabric bytes must be left untouched.
+        da = tmp_path / "da.DataAgent"
+        (da / "Files" / "Config" / "draft" / "lakehouse-tables-lh_x").mkdir(
+            parents=True
+        )
+        (da / ".platform").write_bytes(b'{\n  "k": "v"\n}\n')  # drifted: LF
+        (da / "Files" / "Config" / "data_agent.json").write_bytes(
+            b'{\r\n  "$schema": "..."\r\n}'  # already canonical: CRLF, no NL
+        )
+        stage = da / "Files" / "Config" / "draft" / "stage_config.json"
+        stage.write_bytes(b'{\n  "aiInstructions": "..."\n}')  # drifted: LF
+        ds = (
+            da
+            / "Files"
+            / "Config"
+            / "draft"
+            / "lakehouse-tables-lh_x"
+            / "datasource.json"
+        )
+        ds.write_bytes(b'{\r\n  "elements": []\r\n}')  # already canonical
+
+        result = normalize_tree(tmp_path)
+        assert (da / ".platform") in result.changed
+        assert stage in result.changed
+        assert (da / "Files" / "Config" / "data_agent.json") not in result.changed
+        assert ds not in result.changed
+        assert (da / ".platform").read_bytes() == b'{\r\n  "k": "v"\r\n}'
+        assert stage.read_bytes() == b'{\r\n  "aiInstructions": "..."\r\n}'
+        # Idempotent — second pass is a no-op.
+        assert normalize_tree(tmp_path).is_canonical

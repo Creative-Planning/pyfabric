@@ -119,6 +119,28 @@ class TestValidateItem:
         result = validate_item(item_dir)
         assert result.valid
 
+    def test_data_agent_valid(self, tmp_path: Path):
+        item_dir = _create_item(
+            tmp_path,
+            "da_test",
+            "DataAgent",
+            {
+                "Files/Config/data_agent.json": '{"$schema": "..."}',
+                "Files/Config/publish_info.json": '{"description": "Test agent."}',
+                "Files/Config/draft/stage_config.json": '{"aiInstructions": "..."}',
+                # Datasource folders carry dynamic names; extra files are fine.
+                "Files/Config/draft/lakehouse-tables-lh_x/datasource.json": "{}",
+            },
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_data_agent_missing_config_invalid(self, tmp_path: Path):
+        item_dir = _create_item(tmp_path, "da_test", "DataAgent", {})
+        result = validate_item(item_dir)
+        assert not result.valid
+        assert any("Files/Config/data_agent.json" in e.message for e in result.errors)
+
     def test_mirrored_database_valid(self, tmp_path: Path):
         item_dir = _create_item(
             tmp_path,

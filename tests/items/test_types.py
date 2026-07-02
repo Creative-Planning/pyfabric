@@ -26,6 +26,7 @@ class TestItemType:
             "MirroredDatabase",
             "Ontology",
             "Map",
+            "DataAgent",
         }
         registered = {it.type_name for it in ITEM_TYPES.values()}
         assert expected.issubset(registered)
@@ -57,6 +58,13 @@ class TestItemType:
         df = ITEM_TYPES["Dataflow"]
         assert "queryMetadata.json" in df.required_files
         assert "mashup.pq" in df.required_files
+
+    def test_data_agent_requires_config(self):
+        da = ITEM_TYPES["DataAgent"]
+        assert "Files/Config/data_agent.json" in da.required_files
+        assert "Files/Config/publish_info.json" in da.optional_files
+        assert "Files/Config/draft/stage_config.json" in da.optional_files
+        assert "Files/Config/published/stage_config.json" in da.optional_files
 
     def test_lookup_by_type_name(self):
         assert ITEM_TYPES["Notebook"].type_name == "Notebook"
