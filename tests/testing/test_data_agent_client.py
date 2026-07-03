@@ -2,6 +2,8 @@
 
 import asyncio
 import sys
+import types
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -126,7 +128,130 @@ class TestMissingMcpPackage:
         # Setting a sys.modules entry to None makes `import mcp` raise
         # ImportError regardless of whether mcp is actually installed.
         monkeypatch.setitem(sys.modules, "mcp", None)
+        monkeypatch.setitem(sys.modules, "mcp.client", None)
         monkeypatch.setitem(sys.modules, "mcp.client.streamable_http", None)
         client = DataAgentClient(WS, AGENT, credential=_FakeCredential())
         with pytest.raises(DataAgentError, match=r"pyfabric\[dataagent\]"):
             client.ask("anything")
+
+
+class _FakeInitializedSession(_FakeSession):
+    """A _FakeSession that also supports the initialize handshake."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.initialized = False
+
+    async def initialize(self):
+        self.initialized = True
+
+
+class _FakeClientSession:
+    """Minimal stand-in for ``mcp.ClientSession``."""
+
+    def __init__(self, read, write):
+        self.read = read
+        self.write = write
+        self.session = _FakeInitializedSession(
+            tools=[_FakeTool()],
+            result=_FakeCallResult([_FakeTextBlock("answer")]),
+        )
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeHttpxClient:
+    """Stands in for the httpx.AsyncClient the mcp factory returns."""
+
+    def __init__(self, headers):
+        self.headers = headers
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self.closed = True
+        return False
+
+
+def _install_fake_mcp(monkeypatch, streamable_http_mod):
+    """Register fake ``mcp`` / ``mcp.client`` / ``...streamable_http`` modules.
+
+    Lets ``_ask_async`` run its lazy imports against controlled modules,
+    so tests can pin exactly which transport names exist.
+    """
+    mcp_mod = types.ModuleType("mcp")
+    mcp_mod.ClientSession = _FakeClientSession
+    client_mod = types.ModuleType("mcp.client")
+    client_mod.streamable_http = streamable_http_mod
+    mcp_mod.client = client_mod
+    monkeypatch.setitem(sys.modules, "mcp", mcp_mod)
+    monkeypatch.setitem(sys.modules, "mcp.client", client_mod)
+    monkeypatch.setitem(sys.modules, "mcp.client.streamable_http", streamable_http_mod)
+
+
+class TestTransportSelection:
+    """mcp renamed streamablehttp_client -> streamable_http_client (1.24).
+
+    The client must prefer the new name (which takes a caller-managed
+    ``http_client=`` instead of ``headers=``) and fall back to the old
+    one so the extra's ``mcp>=1.23.0`` floor keeps working.
+    """
+
+    def test_prefers_new_transport_name(self, monkeypatch):
+        calls = {}
+        sh = types.ModuleType("mcp.client.streamable_http")
+
+        def create_mcp_http_client(headers=None):
+            calls["factory_headers"] = headers
+            return _FakeHttpxClient(headers)
+
+        @asynccontextmanager
+        async def streamable_http_client(url, *, http_client=None):
+            calls["url"] = url
+            calls["http_client"] = http_client
+            yield ("read", "write", lambda: None)
+
+        @asynccontextmanager
+        async def streamablehttp_client(url, headers=None):
+            raise AssertionError(
+                "deprecated transport name must not be used when the new one exists"
+            )
+            yield  # pragma: no cover
+
+        sh.create_mcp_http_client = create_mcp_http_client
+        sh.streamable_http_client = streamable_http_client
+        sh.streamablehttp_client = streamablehttp_client
+        _install_fake_mcp(monkeypatch, sh)
+
+        client = DataAgentClient(WS, AGENT, credential=_FakeCredential())
+        assert client.ask("q") == "answer"
+        assert calls["url"] == client.mcp_url
+        assert calls["factory_headers"] == {"Authorization": "Bearer fake-token"}
+        assert isinstance(calls["http_client"], _FakeHttpxClient)
+        # We created the httpx client, so we must close it ourselves —
+        # the new transport API only closes clients it creates itself.
+        assert calls["http_client"].closed
+
+    def test_falls_back_to_old_transport_name(self, monkeypatch):
+        calls = {}
+        sh = types.ModuleType("mcp.client.streamable_http")
+
+        @asynccontextmanager
+        async def streamablehttp_client(url, headers=None):
+            calls["url"] = url
+            calls["headers"] = headers
+            yield ("read", "write", lambda: None)
+
+        sh.streamablehttp_client = streamablehttp_client
+        _install_fake_mcp(monkeypatch, sh)
+
+        client = DataAgentClient(WS, AGENT, credential=_FakeCredential())
+        assert client.ask("q") == "answer"
+        assert calls["url"] == client.mcp_url
+        assert calls["headers"] == {"Authorization": "Bearer fake-token"}
