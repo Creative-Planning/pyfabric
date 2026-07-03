@@ -1,0 +1,30 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+  "name": "page002cardscharts",
+  "displayName": "Cards and Charts",
+  "displayOption": "FitToPage",
+  "height": 720,
+  "width": 1280,
+  "objects": {
+    "pageRefresh": [
+      {
+        "properties": {
+          "show": {
+            "expr": {
+              "Literal": {
+                "Value": "true"
+              }
+            }
+          },
+          "duration": {
+            "expr": {
+              "Literal": {
+                "Value": "'PT5M'"
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
