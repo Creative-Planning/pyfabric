@@ -24,6 +24,10 @@ class TestBuildUrl:
         url = _build_url("/workspaces/ws-1")
         assert "//workspaces" not in url
 
+    def test_params_append_to_existing_query(self):
+        url = _build_url("https://example.com/api?type=driver", {"fileName": "stdout"})
+        assert url == "https://example.com/api?type=driver&fileName=stdout"
+
 
 class TestFabricError:
     def test_parses_json_error(self):
@@ -129,6 +133,68 @@ class TestFabricClientRequests:
         client = self._make_client(mock_requests_session)
         result = client.post("workspaces", {"displayName": "test"})
         assert result["id"] == "new"
+
+
+class TestRawRequest:
+    """``raw_request`` must honor ``params=`` and resolve relative paths.
+
+    Historically it forwarded ``**kwargs`` to ``_request``, which only read
+    ``timeout`` — so ``params={...}`` was silently dropped and the request
+    returned a 200 for the *wrong* resource (e.g. the default Spark driver
+    log instead of the requested file/window).
+    """
+
+    def _make_client(self, mock_session):
+        client = FabricClient("fake-token")
+        client._session = mock_session
+        return client
+
+    def _ok(self, mock_session):
+        mock_session.request.return_value.status_code = 200
+        mock_session.request.return_value.text = "{}"
+        mock_session.request.return_value.content = b"{}"
+
+    def test_params_encoded_into_query_string(self, mock_requests_session):
+        self._ok(mock_requests_session)
+        client = self._make_client(mock_requests_session)
+        client.raw_request(
+            "GET",
+            "https://api.fabric.microsoft.com/v1/some/log",
+            params={"type": "driver", "fileName": "stdout"},
+        )
+        url = mock_requests_session.request.call_args[0][1]
+        assert url == (
+            "https://api.fabric.microsoft.com/v1/some/log?type=driver&fileName=stdout"
+        )
+
+    def test_relative_path_resolved_against_base_url(self, mock_requests_session):
+        self._ok(mock_requests_session)
+        client = self._make_client(mock_requests_session)
+        client.raw_request("GET", "workspaces/ws-1/items")
+        url = mock_requests_session.request.call_args[0][1]
+        assert url == "https://api.fabric.microsoft.com/v1/workspaces/ws-1/items"
+
+    def test_absolute_url_with_embedded_query_passes_through(
+        self, mock_requests_session
+    ):
+        # Back-compat: existing callers pass full URLs with the query string
+        # already embedded; those must be sent byte-for-byte unchanged.
+        self._ok(mock_requests_session)
+        client = self._make_client(mock_requests_session)
+        full = "https://api.fabric.microsoft.com/v1/some/log?type=driver&size=100"
+        client.raw_request("GET", full)
+        assert mock_requests_session.request.call_args[0][1] == full
+
+    def test_unknown_kwargs_raise_type_error(self, mock_requests_session):
+        client = self._make_client(mock_requests_session)
+        with pytest.raises(TypeError):
+            client.raw_request("GET", "workspaces", prams={"oops": 1})
+
+    def test_timeout_forwarded(self, mock_requests_session):
+        self._ok(mock_requests_session)
+        client = self._make_client(mock_requests_session)
+        client.raw_request("GET", "workspaces", timeout=99)
+        assert mock_requests_session.request.call_args[1]["timeout"] == 99
 
 
 class TestPollLroTerminalStatus:
