@@ -37,6 +37,8 @@ variables so suites skip cleanly when no published agent is reachable.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
@@ -114,7 +116,7 @@ class DataAgentClient:
     async def _ask_async(self, question: str) -> str:
         try:
             from mcp import ClientSession
-            from mcp.client.streamable_http import streamablehttp_client
+            from mcp.client import streamable_http
         except ImportError as e:
             raise DataAgentError(
                 "The 'mcp' package is required to query a data agent — "
@@ -123,15 +125,48 @@ class DataAgentClient:
 
         log.debug("Querying data agent", url=self.mcp_url)
         async with (
-            streamablehttp_client(self.mcp_url, headers=self._headers()) as (
-                read,
-                write,
-                _,
-            ),
+            self._open_transport(streamable_http) as (read, write, _),
             ClientSession(read, write) as session,
         ):
             await session.initialize()
             return await self._ask_with_session(session, question)
+
+    @asynccontextmanager
+    async def _open_transport(
+        self, streamable_http: Any
+    ) -> AsyncIterator[tuple[Any, Any, Any]]:
+        """Open the agent's streamable-HTTP transport; yield its streams.
+
+        mcp 1.24 renamed ``streamablehttp_client`` to
+        ``streamable_http_client``; newer releases emit a
+        ``DeprecationWarning`` for the old alias and mcp 2.0 removes it.
+        The two are not drop-in equivalents: the new function has no
+        ``headers=`` — HTTP settings ride on a caller-managed
+        ``httpx.AsyncClient`` passed as ``http_client=``. Prefer the new
+        API when present and fall back to the old name so the
+        ``dataagent`` extra's ``mcp>=1.23.0`` floor keeps working.
+
+        Takes the imported ``mcp.client.streamable_http`` module as a
+        parameter because the import is lazy (see :meth:`_ask_async`).
+        """
+        client_fn = getattr(streamable_http, "streamable_http_client", None)
+        if client_fn is not None:
+            # create_mcp_http_client applies the same defaults the old
+            # wrapper did (follow_redirects, 30 s timeout / 300 s read).
+            # We created the httpx client, so we own its lifecycle —
+            # streamable_http_client only closes clients it creates.
+            async with (
+                streamable_http.create_mcp_http_client(
+                    headers=self._headers()
+                ) as http_client,
+                client_fn(self.mcp_url, http_client=http_client) as streams,
+            ):
+                yield streams
+        else:
+            async with streamable_http.streamablehttp_client(
+                self.mcp_url, headers=self._headers()
+            ) as streams:
+                yield streams
 
     async def _ask_with_session(self, session: Any, question: str) -> str:
         """Run tool discovery + call on an initialized MCP session.
