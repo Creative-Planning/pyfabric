@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -251,6 +252,150 @@ class TestGitClientSyncWorkspace:
         assert (
             body["conflictResolution"]["conflictResolutionPolicy"] == "PreferWorkspace"
         )
+
+
+class TestGitStatusHasWorkspaceChanges:
+    def test_false_when_only_remote_changes(self):
+        status = GitStatus._from_api(
+            {
+                "workspaceHead": "a",
+                "remoteCommitHash": "b",
+                "changes": [
+                    {
+                        "itemMetadata": {"itemType": "Notebook", "displayName": "n"},
+                        "remoteChange": "Modified",
+                        "conflictType": "None",
+                    }
+                ],
+            }
+        )
+        assert not status.has_workspace_changes
+
+    def test_true_when_workspace_side_modified(self):
+        status = GitStatus._from_api(
+            {
+                "workspaceHead": "a",
+                "remoteCommitHash": "a",
+                "changes": [
+                    {
+                        "itemMetadata": {"itemType": "Report", "displayName": "r"},
+                        "workspaceChange": "Modified",
+                        "conflictType": "None",
+                    }
+                ],
+            }
+        )
+        assert status.has_workspace_changes
+
+
+class TestGitClientCommitToGit:
+    def test_mode_all_body_shape(self):
+        client, fabric = _make_client(post_return={})
+        client.commit_to_git("ws-1", comment="normalize after pull")
+        path, kwargs = fabric.post.call_args
+        assert path[0] == "workspaces/ws-1/git/commitToGit"
+        assert kwargs["body"] == {"mode": "All", "comment": "normalize after pull"}
+
+    def test_selective_mode_from_items(self):
+        client, fabric = _make_client(post_return={})
+        items = [{"objectId": "11111111-1111-1111-1111-111111111111"}]
+        client.commit_to_git("ws-1", comment="one item", items=items)
+        body = fabric.post.call_args.kwargs["body"]
+        assert body["mode"] == "Selective"
+        assert body["items"] == items
+
+    def test_workspace_head_forwarded(self):
+        client, fabric = _make_client(post_return={})
+        client.commit_to_git("ws-1", workspace_head="abc123")
+        body = fabric.post.call_args.kwargs["body"]
+        assert body["workspaceHead"] == "abc123"
+
+    def test_comment_omitted_when_none(self):
+        client, fabric = _make_client(post_return={})
+        client.commit_to_git("ws-1")
+        body = fabric.post.call_args.kwargs["body"]
+        assert body == {"mode": "All"}
+
+
+class TestGitClientSyncWorkspacePush:
+    _DIRTY: ClassVar[dict] = {
+        "workspaceHead": "abc",
+        "remoteCommitHash": "abc",
+        "changes": [
+            {
+                "itemMetadata": {"itemType": "Report", "displayName": "r"},
+                "workspaceChange": "Modified",
+                "conflictType": "None",
+            }
+        ],
+    }
+    _IN_SYNC: ClassVar[dict] = {
+        "workspaceHead": "abc",
+        "remoteCommitHash": "abc",
+        "changes": [],
+    }
+
+    def test_push_commits_workspace_changes(self):
+        fabric = MagicMock()
+        fabric.get.side_effect = [self._DIRTY, self._IN_SYNC]
+        fabric.post.return_value = {}
+        client = GitClient(client=fabric)
+
+        status = client.sync_workspace("ws-1", direction="push", comment="push it")
+        path, kwargs = fabric.post.call_args
+        assert path[0] == "workspaces/ws-1/git/commitToGit"
+        assert kwargs["body"] == {"mode": "All", "comment": "push it"}
+        assert status.is_synced
+
+    def test_push_noop_when_no_workspace_changes(self):
+        client, fabric = _make_client(get_return=self._IN_SYNC)
+        status = client.sync_workspace("ws-1", direction="push")
+        fabric.post.assert_not_called()
+        assert status.is_synced
+
+    def test_pull_ignores_workspace_changes(self):
+        # Default direction stays pull-only: a dirty workspace must NOT
+        # trigger a commit (that could revert git-side description edits).
+        client, fabric = _make_client(get_return=self._DIRTY)
+        client.sync_workspace("ws-1")
+        fabric.post.assert_not_called()
+
+    def test_both_pulls_then_pushes(self):
+        behind_and_dirty = {
+            "workspaceHead": "old",
+            "remoteCommitHash": "new",
+            "changes": [
+                {
+                    "itemMetadata": {"itemType": "Notebook", "displayName": "n"},
+                    "remoteChange": "Modified",
+                    "conflictType": "None",
+                }
+            ],
+        }
+        dirty_after_pull = {
+            "workspaceHead": "new",
+            "remoteCommitHash": "new",
+            "changes": [
+                {
+                    "itemMetadata": {"itemType": "Report", "displayName": "r"},
+                    "workspaceChange": "Modified",
+                    "conflictType": "None",
+                }
+            ],
+        }
+        in_sync = {"workspaceHead": "new2", "remoteCommitHash": "new2", "changes": []}
+        fabric = MagicMock()
+        fabric.get.side_effect = [behind_and_dirty, dirty_after_pull, in_sync]
+        fabric.post.return_value = {}
+        client = GitClient(client=fabric)
+
+        status = client.sync_workspace("ws-1", direction="both", comment="round trip")
+        paths = [c.args[0] for c in fabric.post.call_args_list]
+        assert paths == [
+            "workspaces/ws-1/git/updateFromGit",
+            "workspaces/ws-1/git/commitToGit",
+        ]
+        assert status.is_synced
 
 
 # ── Constructor ────────────────────────────────────────────────────────────

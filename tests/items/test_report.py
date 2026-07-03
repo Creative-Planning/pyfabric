@@ -10,9 +10,15 @@ and stripped of UI-default / drag / runtime-selection state — so the
 test is grounded in Fabric's structure without being circular.
 
 The remaining classes are focused unit tests per emitter (slicer, table,
-projections, sort, measure-bound title) and coverage of the
-``NotImplementedError`` boundaries for features whose PBIR bytes are not
-yet attested (Card/MultiCard, inline Aggregate, sort-by-measure).
+cards, column charts, projections, sort, measure-bound title, automatic
+page refresh) and coverage of the ``NotImplementedError`` boundaries for
+features whose PBIR bytes are not yet attested (inline Aggregate,
+sort-by-measure in tables).
+
+The card and chart emitters were certified byte-for-byte against
+Fabric-round-tripped ``visualContainer`` 2.10.0 reference bytes (a
+minimal single-measure card, a 2-measure KPI card, a columnChart, and a
+clusteredColumnChart) before the golden fixture page was generated.
 """
 
 import json
@@ -23,7 +29,9 @@ import pytest
 from pyfabric.items.report import (
     Aggregate,
     Card,
+    ClusteredColumnChart,
     Column,
+    ColumnChart,
     Measure,
     MultiCard,
     Page,
@@ -34,6 +42,7 @@ from pyfabric.items.report import (
     Table,
     TableOrderBy,
     Theme,
+    Visual,
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "pbir_report" / "rpt_golden.Report"
@@ -81,10 +90,61 @@ def _golden_report() -> Report:
             ),
         ],
     )
+    cards_page = Page(
+        display_name="Cards and Charts",
+        name="page002cardscharts",
+        width=1280,
+        height=720,
+        page_refresh="PT5M",
+        visuals=[
+            Card(
+                name="vis3cardmulti0000000",
+                position=Position(x=10, y=0, z=0, width=220, height=120, tab_order=0),
+                measure=[
+                    Measure("fact_x", "Total Rows", format_string="#,0"),
+                    Measure("fact_x", "Total Amount", format_string="\\$#,0.00"),
+                ],
+                value_font_size=14,
+                padding=8,
+                show_border=True,
+                show_visual_header=True,
+            ),
+            Card(
+                name="vis4cardmini00000000",
+                position=Position(x=10, y=680, z=1, width=300, height=36, tab_order=1),
+                measure=Measure("fact_x", "Last Row Received"),
+            ),
+            ColumnChart(
+                name="vis5colchart00000000",
+                position=Position(
+                    x=10, y=300, z=2, width=1240, height=370, tab_order=2
+                ),
+                category=Column("dim_x", "city", display_name="City"),
+                values=[Measure("fact_x", "Total Rows", display_name="Rows")],
+                value_axis_title="Rows",
+                sort_by=Measure("fact_x", "Total Rows"),
+                title="Rows by City",
+            ),
+            ClusteredColumnChart(
+                name="vis6cluchart00000000",
+                position=Position(x=560, y=50, z=3, width=700, height=240, tab_order=3),
+                category=Column("dim_x", "name", display_name="Period"),
+                values=[
+                    Measure("fact_x", "Prior Period", display_name="Last (full)"),
+                    Measure("fact_x", "Current Period", display_name="This (so far)"),
+                ],
+                legend=True,
+                value_axis_title=True,
+                category_axis_title=False,
+                title="This period vs last",
+                show_title=False,
+            ),
+        ],
+    )
     return Report(
         name="rpt_golden",
         semantic_model_path="../sm_golden.SemanticModel",
-        pages=[page],
+        pages=[page, cards_page],
         description="Golden fixture report.",
         logical_id="f1d606f1-d262-b501-40f8-1f64df6fb535",
     )
@@ -137,7 +197,7 @@ def _visual_json(item_dir: Path, page_name: str, visual_name: str) -> dict:
     return json.loads(p.read_text("utf-8"))
 
 
-def _one_visual_report(visual: Slicer | Table, *, page_name: str = "p") -> Report:
+def _one_visual_report(visual: Visual, *, page_name: str = "p") -> Report:
     page = Page(display_name="P", name=page_name, visuals=[visual])
     return Report("rpt", "../x.SemanticModel", [page], strict_descriptions=False)
 
@@ -547,28 +607,317 @@ class TestTheme:
         assert "resourcePackages" not in rj
 
 
+# ── Card (modern cardVisual) ────────────────────────────────────────────────
+
+
+def _lit(node: dict) -> str:
+    """Unwrap a ``{"expr": {"Literal": {"Value": ...}}}`` property."""
+    return node["expr"]["Literal"]["Value"]
+
+
+class TestCard:
+    def _emit(self, tmp_path: Path, card: Card) -> dict:
+        item_dir = _one_visual_report(card).save_to_disk(tmp_path)
+        return _visual_json(item_dir, "p", card.name)
+
+    def test_single_measure_minimal_card(self, tmp_path: Path) -> None:
+        # Shape certified against a Fabric-round-tripped minimal status
+        # card (borderless, no visual header, 10/8pt fonts).
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=300, height=36),
+            measure=Measure("fact_x", "Last Row Received"),
+        )
+        vj = self._emit(tmp_path, card)
+        body = vj["visual"]
+        assert body["visualType"] == "cardVisual"
+        projections = body["query"]["queryState"]["Data"]["projections"]
+        assert len(projections) == 1
+        assert projections[0]["field"]["Measure"]["Property"] == "Last Row Received"
+        assert "sortDefinition" not in body["query"]
+        assert _lit(body["objects"]["value"][0]["properties"]["fontSize"]) == "10D"
+        # Single-measure: only the id:"default" selector entries.
+        assert [e["selector"] for e in body["objects"]["outline"]] == [
+            {"id": "default"}
+        ]
+        assert (
+            _lit(body["visualContainerObjects"]["border"][0]["properties"]["show"])
+            == "false"
+        )
+        assert (
+            _lit(
+                body["visualContainerObjects"]["visualHeader"][0]["properties"]["show"]
+            )
+            == "false"
+        )
+
+    def test_multi_measure_kpi_strip(self, tmp_path: Path) -> None:
+        # Shape certified against a Fabric-round-tripped 2-measure KPI card.
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=220, height=120),
+            measure=[
+                Measure("fact_x", "Total Rows", format_string="#,0"),
+                Measure("fact_x", "Total Amount", format_string="\\$#,0.00"),
+            ],
+            value_font_size=14,
+            padding=8,
+            show_border=True,
+            show_visual_header=True,
+        )
+        body = self._emit(tmp_path, card)["visual"]
+        projections = body["query"]["queryState"]["Data"]["projections"]
+        assert [p["format"] for p in projections] == ["#,0", "\\$#,0.00"]
+        # Default sort on the first measure, flagged as the captured default.
+        sort_def = body["query"]["sortDefinition"]
+        assert sort_def["isDefaultSort"] is True
+        assert sort_def["sort"][0]["field"]["Measure"]["Property"] == "Total Rows"
+        assert sort_def["sort"][0]["direction"] == "Descending"
+        # Per-tile metadata selectors + the default entry.
+        assert [e["selector"] for e in body["objects"]["outline"]] == [
+            {"metadata": "fact_x.Total Rows"},
+            {"metadata": "fact_x.Total Amount"},
+            {"id": "default"},
+        ]
+        # Padding: per-tile entries for all but the first, then default.
+        assert [e["selector"] for e in body["objects"]["padding"]] == [
+            {"metadata": "fact_x.Total Amount"},
+            {"id": "default"},
+        ]
+        # Divider before each tile after the first.
+        assert [e["selector"] for e in body["objects"]["divider"]] == [
+            {"metadata": "fact_x.Total Amount"}
+        ]
+        border = body["visualContainerObjects"]["border"][0]["properties"]
+        assert _lit(border["show"]) == "true"
+        assert _lit(border["radius"]) == "5D"
+
+    def test_dividers_off(self, tmp_path: Path) -> None:
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=220, height=120),
+            measure=[Measure("fact_x", "A"), Measure("fact_x", "B")],
+            show_dividers=False,
+        )
+        body = self._emit(tmp_path, card)["visual"]
+        assert "divider" not in body["objects"]
+
+    def test_title_text_emitted(self, tmp_path: Path) -> None:
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=220, height=120),
+            measure=Measure("fact_x", "A"),
+            title="Rows loaded",
+        )
+        body = self._emit(tmp_path, card)["visual"]
+        title = body["visualContainerObjects"]["title"][0]["properties"]
+        assert _lit(title["text"]) == "'Rows loaded'"
+
+    def test_measure_filters_are_advanced(self, tmp_path: Path) -> None:
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=220, height=120),
+            measure=[Measure("fact_x", "A"), Measure("fact_x", "B")],
+        )
+        vj = self._emit(tmp_path, card)
+        assert [f["type"] for f in vj["filterConfig"]["filters"]] == [
+            "Advanced",
+            "Advanced",
+        ]
+
+    def test_display_units_dropped_with_warning(self, tmp_path: Path) -> None:
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=220, height=120),
+            measure=Measure("fact_x", "A"),
+            display_units="Millions",
+        )
+        body = self._emit(tmp_path, card)["visual"]
+        assert "displayUnits" not in json.dumps(body)
+
+    def test_empty_measures_rejected(self, tmp_path: Path) -> None:
+        card = Card(
+            name="v",
+            position=Position(x=0, y=0, width=220, height=120),
+            measure=[],
+        )
+        with pytest.raises(ValueError, match="at least one"):
+            _one_visual_report(card).save_to_disk(tmp_path)
+
+
+class TestMultiCard:
+    def test_emits_kpi_strip_defaults(self, tmp_path: Path) -> None:
+        visual = MultiCard(
+            name="v",
+            position=Position(x=0, y=0, width=600, height=120),
+            measures=[Measure("fact_x", "A"), Measure("fact_x", "B")],
+        )
+        item_dir = _one_visual_report(visual).save_to_disk(tmp_path)
+        body = _visual_json(item_dir, "p", "v")["visual"]
+        assert body["visualType"] == "cardVisual"
+        assert len(body["query"]["queryState"]["Data"]["projections"]) == 2
+        assert _lit(body["objects"]["value"][0]["properties"]["fontSize"]) == "14D"
+        # show_outline defaults True; accent bar defaults True.
+        assert _lit(body["objects"]["outline"][0]["properties"]["show"]) == "true"
+        assert [e["selector"] for e in body["objects"]["accentBar"]] == [
+            {"metadata": "fact_x.A"},
+            {"metadata": "fact_x.B"},
+        ]
+        assert (
+            _lit(body["visualContainerObjects"]["border"][0]["properties"]["show"])
+            == "true"
+        )
+
+    def test_legacy_styling_knobs_dropped(self, tmp_path: Path) -> None:
+        visual = MultiCard(
+            name="v",
+            position=Position(x=0, y=0, width=600, height=120),
+            measures=[Measure("fact_x", "A")],
+            arrangement="columns",
+            label_heading="Heading2",
+        )
+        item_dir = _one_visual_report(visual).save_to_disk(tmp_path)
+        body = _visual_json(item_dir, "p", "v")["visual"]
+        assert "Heading2" not in json.dumps(body)
+
+
+# ── Column charts ───────────────────────────────────────────────────────────
+
+
+class TestColumnChart:
+    def _emit(self, tmp_path: Path, chart: ColumnChart) -> dict:
+        item_dir = _one_visual_report(chart).save_to_disk(tmp_path)
+        return _visual_json(item_dir, "p", chart.name)
+
+    def test_category_and_measure_projections(self, tmp_path: Path) -> None:
+        # Shape certified against a Fabric-round-tripped columnChart.
+        chart = ColumnChart(
+            name="v",
+            position=Position(x=0, y=0, width=1200, height=400),
+            category=Column("dim_x", "city", display_name="City"),
+            values=[Measure("fact_x", "Total Rows", display_name="Rows")],
+            value_axis_title="Rows",
+            sort_by=Measure("fact_x", "Total Rows"),
+            title="Rows by City",
+        )
+        vj = self._emit(tmp_path, chart)
+        body = vj["visual"]
+        assert body["visualType"] == "columnChart"
+        cat = body["query"]["queryState"]["Category"]["projections"][0]
+        assert cat["active"] is True
+        assert cat["displayName"] == "City"
+        y = body["query"]["queryState"]["Y"]["projections"][0]
+        assert y["displayName"] == "Rows"
+        assert "active" not in y
+        sort_def = body["query"]["sortDefinition"]
+        assert sort_def["isDefaultSort"] is True
+        assert sort_def["sort"][0]["direction"] == "Descending"
+        assert (
+            _lit(body["objects"]["valueAxis"][0]["properties"]["titleText"]) == "'Rows'"
+        )
+        title = body["visualContainerObjects"]["title"][0]["properties"]
+        assert _lit(title["text"]) == "'Rows by City'"
+        assert "show" not in title  # visible title emits text only
+        # Chart references carry no filterConfig at all.
+        assert "filterConfig" not in vj
+
+    def test_clustered_with_legend_and_axis_toggles(self, tmp_path: Path) -> None:
+        # Shape certified against a Fabric-round-tripped clusteredColumnChart.
+        chart = ClusteredColumnChart(
+            name="v",
+            position=Position(x=0, y=0, width=700, height=240),
+            category=Column("dim_x", "name", display_name="Period"),
+            values=[
+                Measure("fact_x", "Prior Period", display_name="Last (full)"),
+                Measure("fact_x", "Current Period", display_name="This (so far)"),
+            ],
+            legend=True,
+            value_axis_title=True,
+            category_axis_title=False,
+            title="This period vs last",
+            show_title=False,
+        )
+        body = self._emit(tmp_path, chart)["visual"]
+        assert body["visualType"] == "clusteredColumnChart"
+        assert len(body["query"]["queryState"]["Y"]["projections"]) == 2
+        legend = body["objects"]["legend"][0]["properties"]
+        assert _lit(legend["show"]) == "true"
+        assert _lit(legend["showGradientLegend"]) == "true"
+        assert (
+            _lit(body["objects"]["valueAxis"][0]["properties"]["showAxisTitle"])
+            == "true"
+        )
+        assert (
+            _lit(body["objects"]["categoryAxis"][0]["properties"]["showAxisTitle"])
+            == "false"
+        )
+        title = body["visualContainerObjects"]["title"][0]["properties"]
+        assert _lit(title["text"]) == "'This period vs last'"
+        assert _lit(title["show"]) == "false"
+
+    def test_axis_objects_omitted_when_unset(self, tmp_path: Path) -> None:
+        chart = ColumnChart(
+            name="v",
+            position=Position(x=0, y=0, width=700, height=240),
+            category=Column("dim_x", "city"),
+            values=[Measure("fact_x", "Total Rows")],
+        )
+        body = self._emit(tmp_path, chart)["visual"]
+        assert "valueAxis" not in body["objects"]
+        assert "categoryAxis" not in body["objects"]
+        assert "legend" not in body["objects"]
+        assert "sortDefinition" not in body["query"]
+
+    def test_missing_category_rejected(self, tmp_path: Path) -> None:
+        chart = ColumnChart(
+            name="v",
+            position=Position(x=0, y=0, width=700, height=240),
+            values=[Measure("fact_x", "Total Rows")],
+        )
+        with pytest.raises(ValueError, match="category"):
+            _one_visual_report(chart).save_to_disk(tmp_path)
+
+    def test_missing_values_rejected(self, tmp_path: Path) -> None:
+        chart = ColumnChart(
+            name="v",
+            position=Position(x=0, y=0, width=700, height=240),
+            category=Column("dim_x", "city"),
+        )
+        with pytest.raises(ValueError, match="at least one measure"):
+            _one_visual_report(chart).save_to_disk(tmp_path)
+
+
+# ── Automatic page refresh (APR) ────────────────────────────────────────────
+
+
+class TestPageRefresh:
+    def _page_json(self, tmp_path: Path, page: Page) -> dict:
+        report = Report("rpt", "../x.SemanticModel", [page], strict_descriptions=False)
+        item_dir = report.save_to_disk(tmp_path)
+        p = item_dir / "definition" / "pages" / page.name / "page.json"
+        return json.loads(p.read_text("utf-8"))
+
+    def test_page_refresh_emits_captured_apr_shape(self, tmp_path: Path) -> None:
+        pj = self._page_json(
+            tmp_path, Page(display_name="P", name="p", page_refresh="PT5M")
+        )
+        apr = pj["objects"]["pageRefresh"][0]["properties"]
+        assert _lit(apr["show"]) == "true"
+        # Single-quoted ISO-8601 duration, captured from a Fabric
+        # round-trip.
+        assert _lit(apr["duration"]) == "'PT5M'"
+        # Fixed-interval APR has NO refreshType property.
+        assert "refreshType" not in apr
+
+    def test_no_objects_key_without_page_refresh(self, tmp_path: Path) -> None:
+        pj = self._page_json(tmp_path, Page(display_name="P", name="p"))
+        assert "objects" not in pj
+
+
 # ── NotImplemented boundaries (features without attested PBIR bytes) ─────────
 
 
 class TestNotImplementedBoundaries:
-    def test_card_raises(self, tmp_path: Path) -> None:
-        visual = Card(
-            name="v",
-            position=Position(x=0, y=0, width=200, height=120),
-            measure=Measure("fact_x", "M"),
-        )
-        with pytest.raises(NotImplementedError, match="Card"):
-            _one_visual_report(visual).save_to_disk(tmp_path)
-
-    def test_multicard_raises(self, tmp_path: Path) -> None:
-        visual = MultiCard(
-            name="v",
-            position=Position(x=0, y=0, width=600, height=120),
-            measures=[Measure("fact_x", "M")],
-        )
-        with pytest.raises(NotImplementedError, match="MultiCard"):
-            _one_visual_report(visual).save_to_disk(tmp_path)
-
     def test_inline_aggregate_projection_raises(self, tmp_path: Path) -> None:
         visual = Table(
             name="v",

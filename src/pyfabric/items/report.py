@@ -14,18 +14,22 @@ Scope (what emits byte-confident PBIR today):
 - **Table** → a ``tableEx`` with mixed :class:`Column` / :class:`Measure`
   projections, an optional sort on a single column, and a per-projection
   ``filterConfig`` (columns ``Categorical``, measures ``Advanced``).
-
-``Card`` and ``MultiCard`` remain in the public API for source
-compatibility but their PBIR emit is **not yet implemented** — it needs
-UI-captured reference bytes. Instantiating them on a saved page raises
-``NotImplementedError``.
+- **Card** / **MultiCard** → a modern ``cardVisual`` with 1..n measure
+  projections (per-tile ``format`` / ``displayName``), value/label font
+  sizes, border/outline/padding/divider objects.
+- **ColumnChart** / **ClusteredColumnChart** → a ``columnChart`` /
+  ``clusteredColumnChart`` with one category and 1..n measures, legend,
+  data labels, and category/value axis-title toggles.
+- **Automatic page refresh** → ``Page(page_refresh="PT5M")`` emits the
+  captured fixed-interval APR shape (single-quoted ISO-8601 duration; no
+  ``refreshType`` property).
 
 PBIR shapes that still need a UI capture (no attested reference bytes —
 would be guessed, so they are dropped-with-warning or raise rather than
 emit invented JSON): tooltip pages, bookmarks, drillthrough,
 hierarchy/expansion slicers, slicer ``mode`` variants (Dropdown/Between),
 ``allow_values`` slicer filters, inline column aggregations,
-``format_string`` column properties, sort-by-measure, and the dynamic
+sort-by-measure in tables, card ``display_units``, and the dynamic
 title (only the fully-styled form is attested; the minimal form emitted
 here is provisional). Each is handled at the point it would be emitted.
 
@@ -154,27 +158,32 @@ class Column:
     """A column reference in the SemanticModel, used inside a visual.
 
     ``entity`` is the SemanticModel table name; ``name`` is the column
-    name on that table. ``format_string`` is accepted for source
-    compatibility but is **not yet emitted** in PBIR (column-property
-    formatting needs UI-captured reference bytes).
+    name on that table. ``format_string``, when set, is emitted as the
+    projection-level ``format`` (attested in Fabric-round-tripped
+    cardVisual bytes). ``display_name`` renames the field within the
+    visual (the projection-level ``displayName``, attested in the chart
+    references).
     """
 
     entity: str
     name: str
     format_string: str | None = None
+    display_name: str | None = None
 
 
 @dataclass(frozen=True)
 class Measure:
     """A measure reference in the SemanticModel, used inside a visual.
 
-    ``format_string`` is accepted for source compatibility but is **not
-    yet emitted** in PBIR.
+    ``format_string``, when set, is emitted as the projection-level
+    ``format``; ``display_name`` as the projection-level ``displayName``
+    (both attested in Fabric-round-tripped reference bytes).
     """
 
     entity: str
     name: str
     format_string: str | None = None
+    display_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -266,25 +275,57 @@ class Slicer(Visual):
 
 @dataclass
 class Card(Visual):
-    """A single-metric KPI card.
+    """A KPI card, emitted as a modern ``cardVisual`` with 1..n measures.
 
-    Retained in the public API for source compatibility. **PBIR emit is
-    not yet implemented** — needs UI-captured reference bytes. Saving a
-    page that contains a ``Card`` raises :class:`NotImplementedError`.
+    ``measure`` accepts a single :class:`Measure` or a list (each measure
+    renders as a tile; a divider separates tiles when ``show_dividers``).
+    Set ``Measure.format_string`` for a per-tile display format (the
+    projection-level ``format``) and ``Measure.display_name`` for a tile
+    label override.
+
+    Defaults match the attested minimal status card (borderless, no
+    visual header, small value font). For the bordered multi-metric KPI
+    strip look, set ``value_font_size=14``, ``padding=8``,
+    ``show_border=True``, ``show_visual_header=True``.
+
+    ``display_units`` is accepted for source compatibility but has no
+    attested modern ``cardVisual`` bytes — a non-default value is dropped
+    with a warning (bake scaling into the measure's ``format_string``
+    instead).
     """
 
-    measure: Measure = field(default_factory=lambda: Measure("", ""))
+    measure: Measure | list[Measure] = field(default_factory=lambda: Measure("", ""))
     display_units: DisplayUnits = "None"
     title: str | None = None
+    value_font_size: int = 10
+    label_font_size: int = 8
+    show_labels: bool = True
+    padding: int = 2
+    show_border: bool = False
+    border_radius: int = 5
+    show_visual_header: bool = False
+    show_dividers: bool = True
+
+    @property
+    def measures(self) -> list[Measure]:
+        """Always-a-list view of ``measure``."""
+        return self.measure if isinstance(self.measure, list) else [self.measure]
 
 
 @dataclass
 class MultiCard(Visual):
-    """A multi-metric KPI strip.
+    """A multi-metric KPI strip, emitted as a multi-measure ``cardVisual``.
 
-    Retained in the public API for source compatibility. **PBIR emit is
-    not yet implemented** — needs UI-captured reference bytes. Saving a
-    page that contains a ``MultiCard`` raises :class:`NotImplementedError`.
+    Equivalent to a :class:`Card` with the KPI-strip styling defaults
+    (larger value font, uniform 8px tile padding, rounded border, visual
+    header, dividers between tiles). ``show_outline`` / ``show_accent_bar``
+    / ``show_shadow`` map to the per-tile ``outline`` / ``accentBar`` /
+    ``shadowCustom`` objects.
+
+    ``display_units``, ``arrangement``, ``label_heading``,
+    ``label_position``, and ``label_font_color`` are accepted for source
+    compatibility but have no attested modern ``cardVisual`` bytes —
+    non-default values are dropped with a warning.
     """
 
     measures: list[Measure] = field(default_factory=list)
@@ -331,6 +372,49 @@ class Table(Visual):
     title: Measure | None = None
 
 
+@dataclass
+class ColumnChart(Visual):
+    """A column chart (``columnChart``): one category, 1..n measures.
+
+    ``category`` projects into the ``Category`` role (marked ``active``);
+    ``values`` into ``Y``. Use ``display_name`` on the refs to relabel
+    axis/legend entries. ``sort_by`` (a projected measure) emits the
+    chart's default sort, descending unless ``sort_direction="asc"``.
+
+    Axis-title knobs: ``value_axis_title`` accepts a string (custom axis
+    title text), ``True``/``False`` (show/hide the default title), or
+    ``None`` (leave Fabric's default). ``category_axis_title`` accepts
+    ``True``/``False``/``None`` the same way.
+
+    ``title`` is the visual-container title text; ``show_title=False``
+    keeps the text but hides it (the attested captured state for charts
+    whose page already explains them).
+    """
+
+    category: Column = field(default_factory=lambda: Column("", ""))
+    values: list[Measure] = field(default_factory=list)
+    data_labels: bool = True
+    legend: bool = False
+    value_axis_title: str | bool | None = None
+    category_axis_title: bool | None = None
+    sort_by: Measure | None = None
+    sort_direction: SortDirection = "desc"
+    title: str | None = None
+    show_title: bool = True
+    show_border: bool = True
+    border_radius: int = 5
+
+
+@dataclass
+class ClusteredColumnChart(ColumnChart):
+    """A clustered column chart (``clusteredColumnChart``).
+
+    Same authoring surface as :class:`ColumnChart`; multiple ``values``
+    render side-by-side per category instead of as separate columns.
+    Typically paired with ``legend=True`` so the series are labeled.
+    """
+
+
 # ── Page ────────────────────────────────────────────────────────────────────
 
 
@@ -344,6 +428,13 @@ class Page:
     ``name`` is the page's id (also its folder name under
     ``definition/pages/``). Leave blank to derive a deterministic id from
     the report + display name; pin it for byte-stable output.
+
+    ``page_refresh`` enables automatic page refresh (APR) with a
+    fixed interval, e.g. ``"PT5M"`` for every 5 minutes. The value is an
+    ISO-8601 duration emitted as a single-quoted literal — the shape was
+    captured from a Fabric round-trip (fixed-interval APR has **no**
+    ``refreshType`` property; don't add one). APR only takes effect on
+    DirectQuery-backed pages; Fabric ignores it elsewhere.
     """
 
     display_name: str
@@ -352,6 +443,7 @@ class Page:
     height: float = 720.0
     name: str = ""  # auto-filled from display_name if blank
     display_option: PageDisplayOption = "FitToPage"
+    page_refresh: str | None = None
 
 
 # ── Report ──────────────────────────────────────────────────────────────────
@@ -594,34 +686,69 @@ def _num(value: float) -> float | int:
     return value
 
 
+# ── Internal: object-property literal expressions ───────────────────────────
+#
+# Visual object properties are tiny expression trees whose leaf is a typed
+# literal token: booleans are bare ``true``/``false``, sizes carry a type
+# suffix (``14D`` decimal, ``8L`` long — as captured from Fabric output),
+# and strings are single-quoted.
+
+
+def _literal(value: bool) -> dict[str, Any]:
+    return {"expr": {"Literal": {"Value": "true" if value else "false"}}}
+
+
+def _literal_num(value: int, suffix: str = "D") -> dict[str, Any]:
+    return {"expr": {"Literal": {"Value": f"{value}{suffix}"}}}
+
+
+def _literal_str(value: str) -> dict[str, Any]:
+    return {"expr": {"Literal": {"Value": f"'{value}'"}}}
+
+
 # ── Internal: page / visual emitters ───────────────────────────────────────
 
 
 def _emit_page_json(page: Page) -> str:
-    return json.dumps(
-        {
-            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
-            "name": page.name,
-            "displayName": page.display_name,
-            "displayOption": page.display_option,
-            "height": _num(page.height),
-            "width": _num(page.width),
-        },
-        indent=2,
-    )
+    payload: dict[str, Any] = {
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.1.0/schema.json",
+        "name": page.name,
+        "displayName": page.display_name,
+        "displayOption": page.display_option,
+        "height": _num(page.height),
+        "width": _num(page.width),
+    }
+    if page.page_refresh is not None:
+        # Captured from a Fabric round-trip: ``duration`` is a
+        # single-quoted ISO-8601 duration literal, and fixed-interval APR
+        # has NO ``refreshType`` property (not derivable from the
+        # published schema — do not add one).
+        payload["objects"] = {
+            "pageRefresh": [
+                {
+                    "properties": {
+                        "show": _literal(True),
+                        "duration": _literal_str(page.page_refresh),
+                    }
+                }
+            ]
+        }
+    return json.dumps(payload, indent=2)
 
 
 def _emit_visual_json(v: Visual) -> str:
-    return json.dumps(
-        {
-            "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
-            "name": v.name,
-            "position": _emit_position(v.position),
-            "visual": _emit_visual_body(v),
-            "filterConfig": _emit_filter_config(v),
-        },
-        indent=2,
-    )
+    payload: dict[str, Any] = {
+        "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.10.0/schema.json",
+        "name": v.name,
+        "position": _emit_position(v.position),
+        "visual": _emit_visual_body(v),
+    }
+    filter_config = _emit_filter_config(v)
+    if filter_config["filters"]:
+        # Chart references carry no filterConfig at all — omit the key
+        # rather than emit an empty list Fabric never writes.
+        payload["filterConfig"] = filter_config
+    return json.dumps(payload, indent=2)
 
 
 def _emit_position(p: Position) -> dict[str, Any]:
@@ -642,10 +769,12 @@ def _emit_visual_body(v: Visual) -> dict[str, Any]:
         return _emit_slicer_body(v)
     if isinstance(v, Table):
         return _emit_table_body(v)
-    if isinstance(v, (Card, MultiCard)):
-        raise NotImplementedError(
-            f"{type(v).__name__} PBIR emit not yet implemented — needs reference bytes"
-        )
+    if isinstance(v, Card):
+        return _emit_card_body(v)
+    if isinstance(v, MultiCard):
+        return _emit_multicard_body(v)
+    if isinstance(v, ColumnChart):  # covers ClusteredColumnChart
+        return _emit_column_chart_body(v)
     raise TypeError(f"unsupported visual type: {type(v).__name__}")
 
 
@@ -669,11 +798,22 @@ def _field_ref(ref: Column | Measure) -> dict[str, Any]:
     }
 
 
-def _projection(ref: Column | Measure) -> dict[str, Any]:
-    """A ``query.queryState.Values.projections[]`` entry."""
+def _projection(ref: Column | Measure, *, active: bool | None = None) -> dict[str, Any]:
+    """A ``query.queryState.<Role>.projections[]`` entry.
+
+    Key order matches the Fabric-round-tripped references: ``field``,
+    ``queryRef``, ``nativeQueryRef``, then ``active`` (when applicable),
+    ``displayName``, and ``format``.
+    """
     proj = _field_ref(ref)
     proj["queryRef"] = f"{ref.entity}.{ref.name}"
     proj["nativeQueryRef"] = ref.name
+    if active is not None:
+        proj["active"] = active
+    if ref.display_name is not None:
+        proj["displayName"] = ref.display_name
+    if ref.format_string is not None:
+        proj["format"] = ref.format_string
     return proj
 
 
@@ -718,11 +858,7 @@ def _emit_slicer_body(s: Slicer) -> dict[str, Any]:
             slicer=s.name,
             allow_values=s.allow_values,
         )
-    projections = []
-    for i, col in enumerate(levels):
-        proj = _projection(col)
-        proj["active"] = i == 0
-        projections.append(proj)
+    projections = [_projection(col, active=i == 0) for i, col in enumerate(levels)]
     return {
         "visualType": "listSlicer",
         "query": {"queryState": {"Values": {"projections": projections}}},
@@ -785,6 +921,294 @@ def _sort_entry(ob: TableOrderBy) -> dict[str, Any]:
     return entry
 
 
+# ── Card emitter (modern cardVisual) ────────────────────────────────────────
+
+
+def _default_sort_definition(ref: Column | Measure, direction: str) -> dict[str, Any]:
+    """A ``sortDefinition`` marking the visual's captured default sort."""
+    entry = _field_ref(ref)
+    entry["direction"] = direction
+    return {"sort": [entry], "isDefaultSort": True}
+
+
+def _metadata_selector(ref: Column | Measure) -> dict[str, str]:
+    return {"metadata": f"{ref.entity}.{ref.name}"}
+
+
+def _card_objects(
+    measures: list[Measure],
+    *,
+    value_font_size: int,
+    label_font_size: int,
+    show_labels: bool,
+    padding: int,
+    show_dividers: bool,
+    outline: bool,
+    accent_bar: bool = False,
+    shadow: bool = False,
+) -> dict[str, Any]:
+    """The ``objects`` block of a cardVisual, following the reference bytes.
+
+    Multi-measure cards carry per-tile (``selector.metadata``) entries for
+    outline/padding/divider plus the ``id: "default"`` entry; single-measure
+    cards carry only the default entries — both as captured from Fabric.
+    """
+    multi = len(measures) > 1
+    objects: dict[str, Any] = {
+        "value": [
+            {
+                "properties": {
+                    "horizontalAlignment": _literal_str("center"),
+                    "fontSize": _literal_num(value_font_size),
+                },
+                "selector": {"id": "default"},
+            }
+        ]
+    }
+
+    outline_entries: list[dict[str, Any]] = []
+    if multi:
+        outline_entries.extend(
+            {
+                "properties": {"show": _literal(outline)},
+                "selector": _metadata_selector(m),
+            }
+            for m in measures
+        )
+    outline_entries.append(
+        {"properties": {"show": _literal(outline)}, "selector": {"id": "default"}}
+    )
+    objects["outline"] = outline_entries
+
+    padding_entries: list[dict[str, Any]] = []
+    if multi:
+        padding_entries.extend(
+            {
+                "properties": {"paddingUniform": _literal_num(padding, "L")},
+                "selector": _metadata_selector(m),
+            }
+            for m in measures[1:]
+        )
+    padding_entries.append(
+        {
+            "properties": {"paddingUniform": _literal_num(padding, "L")},
+            "selector": {"id": "default"},
+        }
+    )
+    objects["padding"] = padding_entries
+
+    if multi and show_dividers:
+        objects["divider"] = [
+            {"properties": {"show": _literal(True)}, "selector": _metadata_selector(m)}
+            for m in measures[1:]
+        ]
+    if accent_bar:
+        objects["accentBar"] = [
+            {"properties": {"show": _literal(True)}, "selector": _metadata_selector(m)}
+            for m in measures
+        ]
+    if shadow:
+        objects["shadowCustom"] = [
+            {"properties": {"show": _literal(True)}, "selector": _metadata_selector(m)}
+            for m in measures
+        ]
+
+    objects["fillCustom"] = [{"properties": {"show": _literal(False)}}]
+    objects["label"] = [
+        {
+            "properties": {
+                "show": _literal(show_labels),
+                "fontSize": _literal_num(label_font_size),
+            },
+            "selector": {"id": "default"},
+        }
+    ]
+    return objects
+
+
+def _card_container_objects(
+    *,
+    show_border: bool,
+    border_radius: int,
+    title: str | None,
+    show_visual_header: bool,
+) -> dict[str, Any]:
+    border_props: dict[str, Any] = {"show": _literal(show_border)}
+    if show_border:
+        border_props["radius"] = _literal_num(border_radius)
+    title_props: dict[str, Any] = (
+        {"text": _literal_str(title)}
+        if title is not None
+        else {"show": _literal(False)}
+    )
+    return {
+        "border": [{"properties": border_props}],
+        "title": [{"properties": title_props}],
+        "visualHeader": [{"properties": {"show": _literal(show_visual_header)}}],
+    }
+
+
+def _card_query(measures: list[Measure]) -> dict[str, Any]:
+    query: dict[str, Any] = {
+        "queryState": {"Data": {"projections": [_projection(m) for m in measures]}}
+    }
+    if len(measures) > 1:
+        # Captured multi-measure cards carry their tile order as the
+        # default sort on the first measure.
+        query["sortDefinition"] = _default_sort_definition(measures[0], "Descending")
+    return query
+
+
+def _emit_card_body(c: Card) -> dict[str, Any]:
+    measures = c.measures
+    if not measures or any(not m.name for m in measures):
+        raise ValueError("Card requires at least one named measure")
+    if c.display_units != "None":
+        log.warning(
+            "Card display_units ignored — no attested modern cardVisual bytes; "
+            "bake the scaling into the measure's format_string instead",
+            card=c.name,
+            display_units=c.display_units,
+        )
+    return {
+        "visualType": "cardVisual",
+        "query": _card_query(measures),
+        "objects": _card_objects(
+            measures,
+            value_font_size=c.value_font_size,
+            label_font_size=c.label_font_size,
+            show_labels=c.show_labels,
+            padding=c.padding,
+            show_dividers=c.show_dividers,
+            outline=False,
+        ),
+        "visualContainerObjects": _card_container_objects(
+            show_border=c.show_border,
+            border_radius=c.border_radius,
+            title=c.title,
+            show_visual_header=c.show_visual_header,
+        ),
+        "drillFilterOtherVisuals": True,
+    }
+
+
+def _emit_multicard_body(m: MultiCard) -> dict[str, Any]:
+    if not m.measures or any(not ms.name for ms in m.measures):
+        raise ValueError("MultiCard requires at least one named measure")
+    if m.display_units != "None":
+        log.warning(
+            "MultiCard display_units ignored — no attested modern cardVisual "
+            "bytes; bake the scaling into the measure's format_string instead",
+            multicard=m.name,
+            display_units=m.display_units,
+        )
+    if m.arrangement != "rows":
+        log.warning(
+            "MultiCard arrangement ignored — no attested modern cardVisual "
+            "bytes for a column arrangement",
+            multicard=m.name,
+            arrangement=m.arrangement,
+        )
+    for knob in ("label_heading", "label_position", "label_font_color"):
+        if getattr(m, knob) is not None:
+            log.warning(
+                "MultiCard label styling knob ignored — no attested modern "
+                "cardVisual bytes",
+                multicard=m.name,
+                knob=knob,
+            )
+    return {
+        "visualType": "cardVisual",
+        "query": _card_query(m.measures),
+        "objects": _card_objects(
+            m.measures,
+            value_font_size=14,
+            label_font_size=8,
+            show_labels=True,
+            padding=8,
+            show_dividers=True,
+            outline=m.show_outline,
+            accent_bar=m.show_accent_bar,
+            shadow=m.show_shadow,
+        ),
+        "visualContainerObjects": _card_container_objects(
+            show_border=True,
+            border_radius=5,
+            title=None,
+            show_visual_header=True,
+        ),
+        "drillFilterOtherVisuals": True,
+    }
+
+
+# ── Column chart emitter ────────────────────────────────────────────────────
+
+
+def _emit_column_chart_body(ch: ColumnChart) -> dict[str, Any]:
+    if not ch.category.name:
+        raise ValueError(f"{type(ch).__name__} requires a category column")
+    if not ch.values:
+        raise ValueError(f"{type(ch).__name__} requires at least one measure")
+
+    query: dict[str, Any] = {
+        "queryState": {
+            "Category": {"projections": [_projection(ch.category, active=True)]},
+            "Y": {"projections": [_projection(m) for m in ch.values]},
+        }
+    }
+    if ch.sort_by is not None:
+        query["sortDefinition"] = _default_sort_definition(
+            ch.sort_by, _SORT_DIRECTION[ch.sort_direction]
+        )
+
+    objects: dict[str, Any] = {
+        "labels": [{"properties": {"show": _literal(ch.data_labels)}}]
+    }
+    if ch.legend:
+        # Captured pair — Fabric emits showGradientLegend alongside show.
+        objects["legend"] = [
+            {
+                "properties": {
+                    "showGradientLegend": _literal(True),
+                    "show": _literal(True),
+                }
+            }
+        ]
+    if ch.value_axis_title is not None:
+        value_axis_props: dict[str, Any] = (
+            {"titleText": _literal_str(ch.value_axis_title)}
+            if isinstance(ch.value_axis_title, str)
+            else {"showAxisTitle": _literal(ch.value_axis_title)}
+        )
+        objects["valueAxis"] = [{"properties": value_axis_props}]
+    if ch.category_axis_title is not None:
+        objects["categoryAxis"] = [
+            {"properties": {"showAxisTitle": _literal(ch.category_axis_title)}}
+        ]
+
+    border_props: dict[str, Any] = {"show": _literal(ch.show_border)}
+    if ch.show_border:
+        border_props["radius"] = _literal_num(ch.border_radius)
+    container: dict[str, Any] = {"border": [{"properties": border_props}]}
+    if ch.title is not None:
+        title_props: dict[str, Any] = {"text": _literal_str(ch.title)}
+        if not ch.show_title:
+            title_props["show"] = _literal(False)
+        container["title"] = [{"properties": title_props}]
+
+    return {
+        "visualType": (
+            "clusteredColumnChart"
+            if isinstance(ch, ClusteredColumnChart)
+            else "columnChart"
+        ),
+        "query": query,
+        "objects": objects,
+        "visualContainerObjects": container,
+        "drillFilterOtherVisuals": True,
+    }
+
+
 # ── filterConfig (one filter per projected field) ──────────────────────────
 
 
@@ -814,4 +1238,10 @@ def _filterable_fields(v: Visual) -> list[Column | Measure]:
         return list(v.field_levels)
     if isinstance(v, Table):
         return [_projectable(f) for f in v.fields]
+    if isinstance(v, Card):
+        return list(v.measures)
+    if isinstance(v, MultiCard):
+        return list(v.measures)
+    # Chart references carry no filterConfig — return nothing so the
+    # key is omitted.
     return []
