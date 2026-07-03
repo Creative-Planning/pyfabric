@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -136,7 +137,85 @@ def validate_item(item_dir: Path) -> ValidationResult:
         for message in lint_data_agent(item_dir):
             result.warnings.append(ValidationError(message, item_dir))
 
+    if platform.metadata.type == "Report":
+        _validate_report_theme(item_dir, result)
+
     return result
+
+
+def _validate_report_theme(item_dir: Path, result: ValidationResult) -> None:
+    """Flag PBIR reports whose base-theme wiring would fail Fabric import.
+
+    A hand-authored ``definition/report.json`` that lacks
+    ``themeCollection.baseTheme`` — or names a theme with no file under
+    ``StaticResources/SharedResources/BaseThemes/`` or no
+    ``resourcePackages`` registration — passes structural validation but
+    **fails Fabric git-sync import silently** (the item never appears and
+    the UI gives no reason). The Report builder emits the theme wiring
+    itself; this rule exists for hand-authored definitions, which is
+    exactly when ``validate_item`` is reached for.
+    """
+    report_json = item_dir / "definition" / "report.json"
+    if not report_json.exists():
+        # Legacy (report.json at the item root) or missing definition —
+        # the required-files checks report those separately.
+        return
+
+    try:
+        report = json.loads(report_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        result.errors.append(
+            ValidationError(
+                f"definition/report.json is not readable JSON: {e}", report_json
+            )
+        )
+        return
+
+    base_theme = (report.get("themeCollection") or {}).get("baseTheme") or {}
+    theme_name = base_theme.get("name")
+    if not theme_name:
+        result.errors.append(
+            ValidationError(
+                "definition/report.json has no themeCollection.baseTheme — "
+                "Fabric git-sync import fails silently without it",
+                report_json,
+            )
+        )
+        return
+
+    theme_type = base_theme.get("type", "SharedResources")
+    if theme_type == "SharedResources":
+        theme_file = (
+            item_dir
+            / "StaticResources"
+            / "SharedResources"
+            / "BaseThemes"
+            / f"{theme_name}.json"
+        )
+        if not theme_file.exists():
+            result.errors.append(
+                ValidationError(
+                    f"baseTheme '{theme_name}' has no theme file at "
+                    "StaticResources/SharedResources/BaseThemes/"
+                    f"{theme_name}.json",
+                    theme_file,
+                )
+            )
+
+    registered = any(
+        item.get("type") == "BaseTheme" and item.get("name") == theme_name
+        for pkg in report.get("resourcePackages") or []
+        for item in pkg.get("items") or []
+    )
+    if not registered:
+        result.errors.append(
+            ValidationError(
+                f"baseTheme '{theme_name}' is not registered as a BaseTheme "
+                "item in resourcePackages — Fabric git-sync import fails "
+                "silently without the registration",
+                report_json,
+            )
+        )
 
 
 def validate_workspace(workspace_dir: Path) -> list[ValidationResult]:
