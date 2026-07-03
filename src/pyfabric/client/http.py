@@ -126,7 +126,8 @@ class FabricClient:
         method: str,
         url: str,
         body: Any = None,
-        **kwargs,
+        *,
+        timeout: float | None = None,
     ) -> requests.Response:
         """Send a single HTTP request. Raises FabricError on 4xx/5xx."""
         data = json.dumps(body) if body is not None else None
@@ -136,7 +137,7 @@ class FabricClient:
             url,
             headers=self._headers(),
             data=data,
-            timeout=kwargs.get("timeout", self._timeout),
+            timeout=timeout if timeout is not None else self._timeout,
         )
         log.debug("  -> %d (%d bytes)", resp.status_code, len(resp.content))
         if resp.status_code >= 400:
@@ -203,15 +204,30 @@ class FabricClient:
     # ------------------------------------------------------------------
 
     def raw_request(
-        self, method: str, url: str, body: Any = None, **kwargs: Any
+        self,
+        method: str,
+        url: str,
+        body: Any = None,
+        *,
+        params: dict | None = None,
+        timeout: float | None = None,
     ) -> requests.Response:
         """Low-level HTTP request for custom polling patterns.
 
         Unlike post()/get() which handle LRO and pagination automatically,
         this returns the raw response for callers that need custom handling
         (e.g., graph refresh with non-standard LRO status values).
+
+        ``url`` may be a path relative to the client's base URL (like
+        ``get``/``post``) or a fully-qualified ``https://`` URL (e.g. an LRO
+        ``Location`` header) — absolute URLs pass through unchanged.
+        ``params`` are encoded into the query string either way; keyword
+        arguments other than ``params``/``timeout`` raise ``TypeError``
+        rather than being silently dropped.
         """
-        return self._request(method, url, body, **kwargs)
+        return self._request(
+            method, self._build_url(url, params), body, timeout=timeout
+        )
 
     def get(self, path: str, params: dict | None = None) -> dict:
         """GET a single resource."""
@@ -256,5 +272,6 @@ class FabricClient:
 def _build_url(path: str, params: dict | None = None, base_url: str = BASE_URL) -> str:
     url = path if path.startswith("http") else f"{base_url}/{path.lstrip('/')}"
     if params:
-        url = f"{url}?{urllib.parse.urlencode(params)}"
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{urllib.parse.urlencode(params)}"
     return url
