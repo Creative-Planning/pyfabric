@@ -12,6 +12,8 @@ from pyfabric.items.semantic_model import (
     Relationship,
     SemanticModel,
     SemanticModelError,
+    SqlDatabaseSource,
+    SqlQuerySource,
     Table,
     arrow_to_tmdl,
 )
@@ -610,3 +612,234 @@ class TestStrictDescriptions:
         # The fixture itself is the canonical "good" example — every
         # visible object has a description.
         assert minimal_model.validate() == []
+
+
+# ── SQL sources (DirectLake + DirectQuery) ──────────────────────────────────
+
+
+@pytest.fixture
+def endpoint() -> SqlDatabaseSource:
+    return SqlDatabaseSource(
+        server="srv.datawarehouse.fabric.microsoft.com",
+        endpoint_id="4427ac75-4e9d-4378-bada-b7210433d369",
+    )
+
+
+@pytest.fixture
+def mirror() -> SqlQuerySource:
+    return SqlQuerySource(
+        name="Mirror",
+        server="srv.datawarehouse.fabric.microsoft.com",
+        database="db_mirror",
+    )
+
+
+def _dl_table(endpoint: SqlDatabaseSource) -> Table:
+    return Table(
+        name="deleted_orders",
+        source=endpoint,
+        schema="gold",
+        description="Archived orders.",
+        columns=[Column("order_no", "string", description="Order number.")],
+    )
+
+
+def _dq_table(mirror: SqlQuerySource, query: str) -> Table:
+    return Table(
+        name="period",
+        source=mirror,
+        description="Period slicer helper.",
+        columns=[Column("Label", "string", description="Period label.")],
+        query=query,
+    )
+
+
+def _dq_model(mirror: SqlQuerySource, query: str) -> SemanticModel:
+    return SemanticModel(
+        name="sm_dq",
+        description="DirectQuery test model.",
+        sources=[mirror],
+        tables=[_dq_table(mirror, query)],
+    )
+
+
+class TestSqlDatabaseSource:
+    def test_invalid_identifier_rejected(self) -> None:
+        with pytest.raises(ValueError, match="M identifier"):
+            SqlDatabaseSource(server="s", endpoint_id="e", name="bad name")
+
+    def test_emits_shared_expression_and_entity_partition(
+        self, tmp_path: Path, endpoint: SqlDatabaseSource
+    ) -> None:
+        sm = SemanticModel(
+            name="sm_dl",
+            description="DirectLake test model.",
+            sources=[endpoint],
+            tables=[_dl_table(endpoint)],
+            compatibility_level=1604,
+        )
+        item_dir = sm.save_to_disk(tmp_path)
+
+        expressions = (item_dir / "definition" / "expressions.tmdl").read_text("utf-8")
+        assert "expression DatabaseQuery =" in expressions
+        assert (
+            'Sql.Database("srv.datawarehouse.fabric.microsoft.com", '
+            '"4427ac75-4e9d-4378-bada-b7210433d369")'
+        ) in expressions
+        assert "annotation PBI_IncludeFutureArtifacts = False" in expressions
+        # No Lakehouse parameter expressions for this source kind.
+        assert "IsParameterQuery" not in expressions
+
+        table_tmdl = (
+            item_dir / "definition" / "tables" / "deleted_orders.tmdl"
+        ).read_text("utf-8")
+        assert (
+            "\tpartition deleted_orders = entity\n"
+            "\t\tmode: directLake\n"
+            "\t\tsource\n"
+            "\t\t\tentityName: deleted_orders\n"
+            "\t\t\tschemaName: gold\n"
+            "\t\t\texpressionSource: DatabaseQuery"
+        ) in table_tmdl
+
+    def test_query_order_lists_expression_then_tables(
+        self, tmp_path: Path, endpoint: SqlDatabaseSource
+    ) -> None:
+        sm = SemanticModel(
+            name="sm_dl",
+            description="DirectLake test model.",
+            sources=[endpoint],
+            tables=[_dl_table(endpoint)],
+            compatibility_level=1604,
+        )
+        item_dir = sm.save_to_disk(tmp_path)
+        model_tmdl = (item_dir / "definition" / "model.tmdl").read_text("utf-8")
+        assert '["DatabaseQuery", "deleted_orders"]' in model_tmdl
+
+
+class TestSqlQuerySource:
+    def test_invalid_identifier_rejected(self) -> None:
+        with pytest.raises(ValueError, match="M identifier"):
+            SqlQuerySource(name="bad name", server="s", database="d")
+
+    def test_emits_direct_query_partition(
+        self, tmp_path: Path, mirror: SqlQuerySource
+    ) -> None:
+        # Partition shape certified byte-for-byte against a
+        # Fabric-round-tripped DirectQuery model before landing.
+        sm = _dq_model(
+            mirror,
+            "SELECT * FROM (VALUES (1, 'by day'), (2, 'by week')) v(SortOrder, Label)",
+        )
+        item_dir = sm.save_to_disk(tmp_path)
+        table_tmdl = (item_dir / "definition" / "tables" / "period.tmdl").read_text(
+            "utf-8"
+        )
+        expected = (
+            "\tpartition period = m\n"
+            "\t\tmode: directQuery\n"
+            "\t\tsource =\n"
+            "\t\t\t\tlet\n"
+            "\t\t\t\t    Source = Sql.Database("
+            '"srv.datawarehouse.fabric.microsoft.com", "db_mirror", '
+            "[Query=\"SELECT * FROM (VALUES (1, 'by day'), (2, 'by week')) "
+            'v(SortOrder, Label)"])\n'
+            "\t\t\t\tin\n"
+            "\t\t\t\t    Source"
+        )
+        assert expected in table_tmdl
+
+    def test_no_expressions_file_for_query_only_model(
+        self, tmp_path: Path, mirror: SqlQuerySource
+    ) -> None:
+        # The Fabric-round-tripped reference model ships no
+        # expressions.tmdl; a query-only model must not emit one.
+        item_dir = _dq_model(mirror, "SELECT 1 AS Label").save_to_disk(tmp_path)
+        assert not (item_dir / "definition" / "expressions.tmdl").exists()
+        model_tmdl = (item_dir / "definition" / "model.tmdl").read_text("utf-8")
+        assert '["period"]' in model_tmdl  # tables only in PBI_QueryOrder
+
+    def test_multiline_query_collapses_newlines_only(
+        self, tmp_path: Path, mirror: SqlQuerySource
+    ) -> None:
+        sm = _dq_model(mirror, "SELECT Label,\n       'two  spaces' AS Padded\nFROM t")
+        item_dir = sm.save_to_disk(tmp_path)
+        table_tmdl = (item_dir / "definition" / "tables" / "period.tmdl").read_text(
+            "utf-8"
+        )
+        # Newlines collapse to single spaces; intra-line spacing survives.
+        assert "Query=\"SELECT Label, 'two  spaces' AS Padded FROM t\"" in table_tmdl
+
+    def test_embedded_double_quotes_escaped(
+        self, tmp_path: Path, mirror: SqlQuerySource
+    ) -> None:
+        sm = _dq_model(mirror, 'SELECT [x] AS "Quoted" FROM t')
+        item_dir = sm.save_to_disk(tmp_path)
+        table_tmdl = (item_dir / "definition" / "tables" / "period.tmdl").read_text(
+            "utf-8"
+        )
+        assert '[Query="SELECT [x] AS ""Quoted"" FROM t"]' in table_tmdl
+
+    def test_missing_query_rejected(self, mirror: SqlQuerySource) -> None:
+        sm = SemanticModel(
+            name="sm_dq",
+            description="DirectQuery test model.",
+            sources=[mirror],
+            tables=[
+                Table(
+                    name="period",
+                    source=mirror,
+                    description="Helper.",
+                    columns=[Column("Label", "string", description="Label.")],
+                )
+            ],
+        )
+        errs = sm.validate()
+        assert any("native SQL query" in e for e in errs)
+
+    def test_query_on_lakehouse_table_rejected(self, gold: LakehouseSource) -> None:
+        sm = SemanticModel(
+            name="sm_bad",
+            description="Bad model.",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="t",
+                    source=gold,
+                    description="T.",
+                    columns=[Column("a", "string", description="A.")],
+                    query="SELECT 1",
+                )
+            ],
+        )
+        errs = sm.validate()
+        assert any("only valid with a SqlQuerySource" in e for e in errs)
+
+
+class TestLakehouseSourceRegression:
+    def test_import_output_unchanged_by_new_source_kinds(
+        self, tmp_path: Path, minimal_model: SemanticModel
+    ) -> None:
+        # The import-mode M partition and Lakehouse expressions must be
+        # byte-identical to the pre-SQL-sources output.
+        item_dir = minimal_model.save_to_disk(tmp_path)
+        expressions = (item_dir / "definition" / "expressions.tmdl").read_text("utf-8")
+        assert "Lakehouse.Contents(null)" in expressions
+        table_tmdl = (
+            item_dir / "definition" / "tables" / "fact_status.tmdl"
+        ).read_text("utf-8")
+        assert (
+            "\tpartition fact_status = m\n"
+            "\t\tmode: import\n"
+            "\t\tsource =\n"
+            "\t\t\t\tlet\n"
+            "\t\t\t\t    Source = Gold,\n"
+            '\t\t\t\t    tbl = Source{[Id="fact_status", Schema="dbo"]}[Data]\n'
+            "\t\t\t\tin\n"
+            "\t\t\t\t    tbl"
+        ) in table_tmdl
+        model_tmdl = (item_dir / "definition" / "model.tmdl").read_text("utf-8")
+        assert (
+            '["GoldWorkspaceId", "GoldLakehouseId", "Gold", '
+            '"dim_section", "fact_status"]'
+        ) in model_tmdl

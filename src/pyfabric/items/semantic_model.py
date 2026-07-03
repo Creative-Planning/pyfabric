@@ -1,9 +1,17 @@
 """Build Fabric SemanticModel items by hand without writing TMDL by hand.
 
-MVP scope: import-mode tables sourced from a Fabric Lakehouse via a shared
-``Lakehouse.Contents`` M expression. Out of scope (for now): DirectLake
-partitions, calculated tables, perspectives, role-level security,
-hierarchies, TMDL parsing.
+Three partition sources are supported:
+
+- :class:`LakehouseSource` — import-mode tables over a shared
+  ``Lakehouse.Contents`` M expression.
+- :class:`SqlDatabaseSource` — DirectLake ``entity`` partitions over a SQL
+  analytics endpoint, sharing one ``Sql.Database`` expression.
+- :class:`SqlQuerySource` — DirectQuery M partitions with a per-table
+  native SQL query (``Sql.Database(server, db, [Query="..."])``) — the
+  near-realtime pattern over SQL endpoint views.
+
+Out of scope (for now): calculated tables, perspectives, role-level
+security, hierarchies, TMDL parsing.
 
 Every write routes through :func:`pyfabric.items.normalize.write_artifact_file`,
 so emitted bytes match Fabric's per-file-type byte convention and won't
@@ -81,6 +89,7 @@ Usage::
     model.save_to_disk(Path("ws/"))
 """
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -148,6 +157,86 @@ class LakehouseSource:
             raise ValueError(
                 f"LakehouseSource.name must be a valid M identifier, got {self.name!r}"
             )
+
+
+@dataclass(frozen=True)
+class SqlDatabaseSource:
+    """A SQL analytics endpoint read via DirectLake ``entity`` partitions.
+
+    Emits one shared expression in ``expressions.tmdl``::
+
+        expression <name> =
+                let
+                    database = Sql.Database("<server>", "<endpoint_id>")
+                in
+                    database
+
+    and each table sourced from it emits an ``entity`` partition
+    (``mode: directLake``) referencing the expression via
+    ``expressionSource`` — no per-table M.
+
+    ``server`` is the endpoint host
+    (``*.datawarehouse.fabric.microsoft.com``); ``endpoint_id`` is the SQL
+    analytics endpoint's database name or GUID as shown in its connection
+    settings.
+
+    DirectLake models require ``compatibilityLevel`` 1604+ — pass
+    ``SemanticModel(compatibility_level=1604)`` (a warning is logged
+    otherwise, because Fabric's sync failure for this is opaque).
+    """
+
+    server: str
+    endpoint_id: str
+    name: str = "DatabaseQuery"
+    description: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.isidentifier():
+            raise ValueError(
+                f"SqlDatabaseSource.name must be a valid M identifier, got {self.name!r}"
+            )
+
+
+@dataclass(frozen=True)
+class SqlQuerySource:
+    """A SQL database read via per-table DirectQuery native queries.
+
+    Each table sourced from it must set ``Table.query`` (a native T-SQL
+    query) and emits an M partition (``mode: directQuery``)::
+
+        partition <table> = m
+            mode: directQuery
+            source =
+                    let
+                        Source = Sql.Database("<server>", "<database>", [Query="<query>"])
+                    in
+                        Source
+
+    This is the near-realtime pattern for models over SQL endpoint
+    *views* (e.g. a mirrored database's silver views), where DirectLake
+    isn't available and import mode defeats the purpose. Disconnected
+    helper tables work the same way with a ``SELECT ... FROM (VALUES ...)``
+    query.
+
+    No expression is emitted in ``expressions.tmdl`` — the
+    ``Sql.Database`` call is inlined per partition, matching the
+    Fabric-round-tripped reference model.
+    """
+
+    name: str
+    server: str
+    database: str
+    description: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.isidentifier():
+            raise ValueError(
+                f"SqlQuerySource.name must be a valid M identifier, got {self.name!r}"
+            )
+
+
+# Anything a Table can read from.
+Source = LakehouseSource | SqlDatabaseSource | SqlQuerySource
 
 
 # ── Columns ─────────────────────────────────────────────────────────────────
@@ -226,22 +315,28 @@ class Relationship:
 
 @dataclass
 class Table:
-    """A table with columns, optional measures, and a Lakehouse partition source.
+    """A table with columns, optional measures, and a partition source.
 
-    ``schema`` is the lakehouse SQL schema (defaults to ``"dbo"`` for
-    schema-enabled lakehouses). ``data_category`` on the table itself
-    can be ``"Time"`` to flag a date dimension for Power BI's time
-    intelligence.
+    ``source`` decides the partition shape: :class:`LakehouseSource`
+    (import-mode M over ``Lakehouse.Contents``), :class:`SqlDatabaseSource`
+    (DirectLake ``entity`` partition), or :class:`SqlQuerySource`
+    (DirectQuery M with a native query — requires ``query``).
+
+    ``schema`` is the SQL schema (defaults to ``"dbo"``; used as
+    ``schemaName`` for DirectLake entity partitions). ``data_category``
+    on the table itself can be ``"Time"`` to flag a date dimension for
+    Power BI's time intelligence.
     """
 
     name: str
-    source: LakehouseSource
+    source: Source
     columns: list[Column]
     measures: list[Measure] = field(default_factory=list)
     schema: str = "dbo"
     description: str | None = None
     is_hidden: bool = False
     data_category: str | None = None
+    query: str | None = None
     annotations: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -331,7 +426,7 @@ class SemanticModel:
     """
 
     name: str
-    sources: list[LakehouseSource]
+    sources: list[Source]
     tables: list[Table]
     relationships: list[Relationship] = field(default_factory=list)
     description: str = ""
@@ -402,6 +497,32 @@ class SemanticModel:
                     f"{t.name}: source {t.source.name!r} not in model.sources"
                 )
 
+        # DirectQuery sources need a native query per table; other source
+        # kinds must not carry one (it would be silently ignored).
+        for t in self.tables:
+            if isinstance(t.source, SqlQuerySource):
+                if not (t.query or "").strip():
+                    errors.append(
+                        f"{t.name}: tables on a SqlQuerySource need a "
+                        f"native SQL query (Table.query)"
+                    )
+            elif t.query is not None:
+                errors.append(
+                    f"{t.name}: Table.query is only valid with a "
+                    f"SqlQuerySource source (got {type(t.source).__name__})"
+                )
+
+        if self.compatibility_level < 1604 and any(
+            isinstance(s, SqlDatabaseSource) for s in self.sources
+        ):
+            log.warning(
+                "DirectLake models require compatibilityLevel 1604+; "
+                "Fabric's sync failure for this is opaque — pass "
+                "SemanticModel(compatibility_level=1604)",
+                model=self.name,
+                compatibility_level=self.compatibility_level,
+            )
+
         errors.extend(self._check_descriptions())
         return errors
 
@@ -468,7 +589,12 @@ class SemanticModel:
         write_artifact_file(item_dir / "definition.pbism", self._emit_pbism())
         write_artifact_file(definition / "database.tmdl", self._emit_database())
         write_artifact_file(definition / "model.tmdl", self._emit_model())
-        write_artifact_file(definition / "expressions.tmdl", self._emit_expressions())
+        expressions = self._emit_expressions()
+        if expressions:
+            # A model whose only sources are SqlQuerySource has no shared
+            # expressions; the Fabric-round-tripped reference model ships
+            # no expressions.tmdl at all, so neither do we.
+            write_artifact_file(definition / "expressions.tmdl", expressions)
         write_artifact_file(
             definition / "relationships.tmdl", self._emit_relationships()
         )
@@ -527,10 +653,16 @@ class SemanticModel:
         return f"database\n\tcompatibilityLevel: {self.compatibility_level}"
 
     def _emit_model(self) -> str:
+        # PBI_QueryOrder lists every M query in the model: the parameter +
+        # navigation expressions a source contributes (LakehouseSource
+        # brings three, SqlDatabaseSource one, SqlQuerySource none — its
+        # Sql.Database call is inlined per partition) and then the tables.
+        lakehouse_sources = [s for s in self.sources if isinstance(s, LakehouseSource)]
         order = (
-            [f"{s.name}WorkspaceId" for s in self.sources]
-            + [f"{s.name}LakehouseId" for s in self.sources]
-            + [s.name for s in self.sources]
+            [f"{s.name}WorkspaceId" for s in lakehouse_sources]
+            + [f"{s.name}LakehouseId" for s in lakehouse_sources]
+            + [s.name for s in lakehouse_sources]
+            + [s.name for s in self.sources if isinstance(s, SqlDatabaseSource)]
             + [t.name for t in self.tables]
         )
         # PBI_QueryOrder is a JSON array embedded as a TMDL annotation value.
@@ -564,19 +696,24 @@ class SemanticModel:
     def _emit_expressions(self) -> str:
         chunks: list[str] = []
         for s in self.sources:
-            ws_id_name = f"{s.name}WorkspaceId"
-            lh_id_name = f"{s.name}LakehouseId"
-            chunks.append(
-                _emit_parameter_expression(
-                    ws_id_name, s.workspace_id, _lineage(ws_id_name)
+            if isinstance(s, LakehouseSource):
+                ws_id_name = f"{s.name}WorkspaceId"
+                lh_id_name = f"{s.name}LakehouseId"
+                chunks.append(
+                    _emit_parameter_expression(
+                        ws_id_name, s.workspace_id, _lineage(ws_id_name)
+                    )
                 )
-            )
-            chunks.append(
-                _emit_parameter_expression(
-                    lh_id_name, s.lakehouse_id, _lineage(lh_id_name)
+                chunks.append(
+                    _emit_parameter_expression(
+                        lh_id_name, s.lakehouse_id, _lineage(lh_id_name)
+                    )
                 )
-            )
-            chunks.append(_emit_lakehouse_expression(s, _lineage(s.name)))
+                chunks.append(_emit_lakehouse_expression(s, _lineage(s.name)))
+            elif isinstance(s, SqlDatabaseSource):
+                chunks.append(_emit_sql_database_expression(s, _lineage(s.name)))
+            # SqlQuerySource contributes no expression — its Sql.Database
+            # call is inlined in each table partition.
         return "\n\n".join(chunks)
 
     def _emit_relationships(self) -> str:
@@ -711,8 +848,52 @@ def _emit_column(t: Table, c: Column) -> str:
     return "\n".join(lines)
 
 
+def _emit_sql_database_expression(s: SqlDatabaseSource, lineage_tag: str) -> str:
+    """The shared ``Sql.Database`` expression DirectLake entity partitions reference."""
+    return (
+        f"expression {s.name} =\n"
+        "\t\tlet\n"
+        f'\t\t    database = Sql.Database("{s.server}", "{s.endpoint_id}")\n'
+        "\t\tin\n"
+        "\t\t    database\n"
+        f"\tlineageTag: {lineage_tag}\n"
+        "\n"
+        "\tannotation PBI_IncludeFutureArtifacts = False"
+    )
+
+
 def _emit_partition(t: Table) -> str:
-    """The ``partition`` block reading from the Lakehouse via the shared M expression."""
+    """The ``partition`` block, shaped by the table's source kind."""
+    if isinstance(t.source, SqlDatabaseSource):
+        # DirectLake entity partition — no per-table M; references the
+        # shared Sql.Database expression by name.
+        return (
+            f"\tpartition {t.name} = entity\n"
+            "\t\tmode: directLake\n"
+            "\t\tsource\n"
+            f"\t\t\tentityName: {t.name}\n"
+            f"\t\t\tschemaName: {t.schema}\n"
+            f"\t\t\texpressionSource: {t.source.name}"
+        )
+    if isinstance(t.source, SqlQuerySource):
+        # DirectQuery M partition with an inlined native query. The TMDL
+        # source line is single-line, so newlines in the query collapse to
+        # single spaces (intra-line spacing survives — SQL string literals
+        # keep their bytes); M escapes embedded double quotes by doubling.
+        # validate() guarantees t.query is set for SqlQuerySource tables.
+        assert t.query is not None
+        one_line = re.sub(r"\s*\n\s*", " ", t.query.strip())
+        escaped_query = one_line.replace('"', '""')
+        return (
+            f"\tpartition {t.name} = m\n"
+            "\t\tmode: directQuery\n"
+            "\t\tsource =\n"
+            "\t\t\t\tlet\n"
+            f'\t\t\t\t    Source = Sql.Database("{t.source.server}", '
+            f'"{t.source.database}", [Query="{escaped_query}"])\n'
+            "\t\t\t\tin\n"
+            "\t\t\t\t    Source"
+        )
     return (
         f"\tpartition {t.name} = m\n"
         "\t\tmode: import\n"
