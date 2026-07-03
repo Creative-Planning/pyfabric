@@ -1,13 +1,12 @@
 """
 Client for the Fabric Git Integration REST API.
 
-Wraps the workspace ↔ git repository sync endpoints with typed helpers.
-This module starts with the read + pull operations most useful for CI/CD
-automation:
+Wraps the workspace ↔ git repository sync endpoints with typed helpers:
 
 - :class:`GitClient.get_status` — what's different between workspace and remote
 - :class:`GitClient.update_from_git` — apply remote commits to the workspace (LRO)
-- :class:`GitClient.sync_workspace` — convenience: get_status then update if behind
+- :class:`GitClient.commit_to_git` — commit workspace changes back to git (LRO)
+- :class:`GitClient.sync_workspace` — convenience: status + pull and/or push
 
 The Long-Running Operation (LRO) polling for 202 responses is handled by
 the underlying :class:`pyfabric.client.http.FabricClient`. Callers don't
@@ -110,6 +109,18 @@ class GitStatus:
 
         This is the condition :meth:`GitClient.update_from_git` resolves."""
         return self.workspace_head != self.remote_commit_hash
+
+    @property
+    def has_workspace_changes(self) -> bool:
+        """True when any item changed on the workspace side.
+
+        This is the condition :meth:`GitClient.commit_to_git` resolves.
+
+        Caution: a workspace-side ``Modified`` on an item whose only edit
+        you made was ``.platform`` ``metadata.description`` in git is the
+        *description-revert signature* — see :meth:`GitClient.commit_to_git`
+        for why committing it would overwrite the git-side description."""
+        return any(c.workspace_change for c in self.changes)
 
     @classmethod
     def _from_api(cls, payload: dict[str, Any]) -> GitStatus:
@@ -222,45 +233,138 @@ class GitClient:
             f"workspaces/{workspace_id}/git/updateFromGit", body=body
         )
 
+    def commit_to_git(
+        self,
+        workspace_id: str,
+        *,
+        comment: str | None = None,
+        items: list[dict[str, str]] | None = None,
+        workspace_head: str | None = None,
+    ) -> dict[str, Any]:
+        """Commit workspace-side changes back to the connected git branch.
+
+        Maps to ``POST workspaces/{id}/git/commitToGit``. Without ``items``
+        this is a ``mode="All"`` commit (every workspace-side change);
+        passing ``items`` switches to ``mode="Selective"`` and commits only
+        those items.
+
+        This is a Long-Running Operation; the underlying client polls to
+        completion. The operation's ``/result`` fetch can return 400
+        ``OperationHasNoResult`` — that is benign (commitToGit has no result
+        payload) and is already tolerated by the LRO helper.
+
+        Warning — the description-revert hazard:
+            ``updateFromGit`` does NOT apply ``.platform``
+            ``metadata.description`` changes to an *existing* workspace item
+            (the API reports in-sync anyway). A later ``commit_to_git`` with
+            ``mode="All"`` then writes the item's workspace state back,
+            silently **reverting the description in git**. The durable way to
+            change an existing item's description is
+            ``PATCH workspaces/{ws}/items/{id}`` with the new description,
+            then commit. If :meth:`get_status` shows a workspace-side
+            ``Modified`` for an item whose only git-side edit was
+            ``.platform`` metadata, that's this failure mode — don't blanket
+            commit over it.
+
+        Args:
+            workspace_id: The workspace's GUID.
+            comment: Commit message recorded on the git commit. Optional per
+                the API, but strongly recommended.
+            items: For a selective commit, the item identifiers to include —
+                dicts with ``objectId`` and/or ``logicalId`` keys, matching
+                the REST API's ``ItemIdentifier`` shape.
+            workspace_head: The commit SHA the workspace is believed to be
+                at; the server rejects the commit if it doesn't match
+                (race detection). Omit to let the service use its current
+                head.
+
+        Returns:
+            The terminal operation body, or ``{}`` when the operation has
+            no result payload.
+
+        Raises:
+            FabricError: On API errors. Common codes:
+                ``WorkspaceNotConnectedToGit``, ``NothingToCommit``,
+                ``WorkspaceHeadMismatch``, ``InsufficientPrivileges``.
+        """
+        body: dict[str, Any] = {"mode": "Selective" if items else "All"}
+        if comment is not None:
+            body["comment"] = comment
+        if items:
+            body["items"] = items
+        if workspace_head is not None:
+            body["workspaceHead"] = workspace_head
+        log.info(
+            "git.commit_to_git",
+            workspace_id=workspace_id,
+            mode=body["mode"],
+            items=len(items) if items else None,
+        )
+        return self._client.post(
+            f"workspaces/{workspace_id}/git/commitToGit", body=body
+        )
+
     def sync_workspace(
         self,
         workspace_id: str,
         *,
+        direction: Literal["pull", "push", "both"] = "pull",
         conflict_policy: ConflictPolicy = "PreferRemote",
         allow_override_items: bool = True,
+        comment: str | None = None,
     ) -> GitStatus:
-        """Pull remote into workspace if behind. No-op if already in sync.
+        """Sync workspace and git. No-op if already in sync.
 
-        Wraps :meth:`get_status` and :meth:`update_from_git` for the common
-        "make Fabric match the latest git commit" flow.
+        Wraps :meth:`get_status`, :meth:`update_from_git`, and
+        :meth:`commit_to_git` for the common one-shot flows:
+
+        - ``direction="pull"`` (default): make Fabric match the latest git
+          commit — pull remote into the workspace if behind.
+        - ``direction="push"``: commit workspace-side changes back to git
+          (e.g. Fabric normalized an item after a pull, leaving a
+          workspace-side ``Modified`` that git doesn't have).
+        - ``direction="both"``: pull first, then push whatever
+          workspace-side changes remain.
+
+        Before pushing, read the description-revert warning on
+        :meth:`commit_to_git` — a blanket push can revert git-side
+        ``.platform`` description edits that ``updateFromGit`` never applied.
 
         Args:
             workspace_id: The workspace's GUID.
+            direction: Which way to move changes (see above).
             conflict_policy: Forwarded to :meth:`update_from_git`.
             allow_override_items: Forwarded to :meth:`update_from_git`.
+            comment: Forwarded to :meth:`commit_to_git` when pushing.
 
         Returns:
             The :class:`GitStatus` observed after the sync (or the original
-            status when no sync was needed). When successful, the returned
-            ``workspace_head`` equals the ``remote_commit_hash`` that was
-            current when this call started.
+            status when no sync was needed). For a successful pull, the
+            returned ``workspace_head`` equals the ``remote_commit_hash``
+            that was current when this call started.
         """
         status = self.get_status(workspace_id)
-        if not status.is_behind:
+
+        if direction in ("pull", "both") and status.is_behind:
+            self.update_from_git(
+                workspace_id,
+                remote_commit_hash=status.remote_commit_hash,
+                workspace_head=status.workspace_head,
+                conflict_policy=conflict_policy,
+                allow_override_items=allow_override_items,
+            )
+            # Re-read status so the push decision (and the caller) see the
+            # post-update snapshot, incl. items the API flagged after merge.
+            status = self.get_status(workspace_id)
+
+        if direction in ("push", "both") and status.has_workspace_changes:
+            self.commit_to_git(workspace_id, comment=comment)
+            status = self.get_status(workspace_id)
+
+        if status.is_synced:
             log.info(
                 "git.sync_workspace.in_sync",
                 workspace_id=workspace_id,
                 head=status.workspace_head[:8],
             )
-            return status
-
-        self.update_from_git(
-            workspace_id,
-            remote_commit_hash=status.remote_commit_hash,
-            workspace_head=status.workspace_head,
-            conflict_policy=conflict_policy,
-            allow_override_items=allow_override_items,
-        )
-        # Re-read status so the caller gets the post-update snapshot
-        # (incl. any items the API flagged after the merge).
-        return self.get_status(workspace_id)
+        return status
