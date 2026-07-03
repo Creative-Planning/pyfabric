@@ -1,12 +1,24 @@
-"""Tests for the Jobs API helpers (run_on_demand / run_notebook)."""
+"""Tests for the Jobs API helpers (run_on_demand / run_notebook / schedules)."""
 
 from __future__ import annotations
 
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
 
-from pyfabric.items.jobs import _param_type, run_notebook, run_on_demand
+from pyfabric.items.jobs import (
+    _param_type,
+    _schedule_job_type,
+    create_schedule,
+    delete_schedule,
+    get_schedule,
+    list_job_instances,
+    list_schedules,
+    run_notebook,
+    run_on_demand,
+    update_schedule,
+)
 
 
 def _client(responses: list) -> MagicMock:
@@ -100,3 +112,146 @@ def test_param_type():
     assert _param_type(3) == "int"
     assert _param_type(3.5) == "float"
     assert _param_type("x") == "string"
+
+
+# ── Schedules ────────────────────────────────────────────────────────────────
+
+
+_DAILY_CONFIG = {
+    "type": "Daily",
+    "times": ["07:00"],
+    "localTimeZoneId": "Central Standard Time",
+    "startDateTime": "2026-07-01T00:00:00",
+    "endDateTime": "2036-07-01T00:00:00",
+}
+
+
+class TestScheduleJobTypeAliases:
+    def test_mlv_instances_spelling_maps_to_schedules_spelling(self):
+        # Job instances report "MaterializedLakeViews", but the schedules
+        # endpoint 400s (InvalidJobType) on it — only the "Refresh"-prefixed
+        # form works. The alias map absorbs the asymmetry.
+        assert (
+            _schedule_job_type("MaterializedLakeViews")
+            == "RefreshMaterializedLakeViews"
+        )
+
+    def test_schedules_spellings_pass_through(self):
+        assert (
+            _schedule_job_type("RefreshMaterializedLakeViews")
+            == "RefreshMaterializedLakeViews"
+        )
+        # Verified against the live API 2026-07-03: schedules accept
+        # RunNotebook for notebooks (bare "Notebook" 400s) and Execute
+        # for pipelines.
+        assert _schedule_job_type("RunNotebook") == "RunNotebook"
+        assert _schedule_job_type("Execute") == "Execute"
+
+
+class TestListSchedules:
+    def test_normalizes_job_type_in_path(self):
+        c = MagicMock()
+        c.get_paged.return_value = []
+        list_schedules(c, "WS", "ITEM", "MaterializedLakeViews")
+        c.get_paged.assert_called_once_with(
+            "workspaces/WS/items/ITEM/jobs/RefreshMaterializedLakeViews/schedules"
+        )
+
+    def test_returns_schedules(self):
+        c = MagicMock()
+        c.get_paged.return_value = [{"id": "s1", "enabled": True}]
+        out = list_schedules(c, "WS", "ITEM", "RunNotebook")
+        assert out == [{"id": "s1", "enabled": True}]
+
+
+class TestGetSchedule:
+    def test_path_includes_schedule_id(self):
+        c = MagicMock()
+        get_schedule(c, "WS", "ITEM", "MaterializedLakeViews", "SCHED")
+        c.get.assert_called_once_with(
+            "workspaces/WS/items/ITEM/jobs/RefreshMaterializedLakeViews/schedules/SCHED"
+        )
+
+
+class TestCreateSchedule:
+    def test_body_shape(self):
+        c = MagicMock()
+        create_schedule(
+            c,
+            "WS",
+            "ITEM",
+            "RefreshMaterializedLakeViews",
+            configuration=_DAILY_CONFIG,
+        )
+        path, body = c.post.call_args[0]
+        assert path == (
+            "workspaces/WS/items/ITEM/jobs/RefreshMaterializedLakeViews/schedules"
+        )
+        assert body == {"enabled": True, "configuration": _DAILY_CONFIG}
+
+    def test_enabled_false(self):
+        c = MagicMock()
+        create_schedule(
+            c, "WS", "ITEM", "Execute", configuration=_DAILY_CONFIG, enabled=False
+        )
+        assert c.post.call_args[0][1]["enabled"] is False
+
+
+class TestUpdateSchedule:
+    def test_patches_full_replacement(self):
+        c = MagicMock()
+        update_schedule(
+            c,
+            "WS",
+            "ITEM",
+            "MaterializedLakeViews",
+            "SCHED",
+            configuration=_DAILY_CONFIG,
+            enabled=False,
+        )
+        path, body = c.patch.call_args[0]
+        assert path == (
+            "workspaces/WS/items/ITEM/jobs/RefreshMaterializedLakeViews/schedules/SCHED"
+        )
+        assert body == {"enabled": False, "configuration": _DAILY_CONFIG}
+
+
+class TestDeleteSchedule:
+    def test_deletes_by_id(self):
+        c = MagicMock()
+        delete_schedule(c, "WS", "ITEM", "RunNotebook", "SCHED")
+        c.delete.assert_called_once_with(
+            "workspaces/WS/items/ITEM/jobs/RunNotebook/schedules/SCHED"
+        )
+
+
+class TestListJobInstances:
+    _INSTANCES: ClassVar[list[dict]] = [
+        {"id": "1", "jobType": "MaterializedLakeViews", "status": "Failed"},
+        {"id": "2", "jobType": "RunNotebook", "status": "Completed"},
+    ]
+
+    def _client(self):
+        c = MagicMock()
+        c.get_paged.return_value = list(self._INSTANCES)
+        return c
+
+    def test_unfiltered_returns_all(self):
+        c = self._client()
+        out = list_job_instances(c, "WS", "ITEM")
+        c.get_paged.assert_called_once_with("workspaces/WS/items/ITEM/jobs/instances")
+        assert len(out) == 2
+
+    def test_filter_matches_instances_spelling(self):
+        c = self._client()
+        out = list_job_instances(c, "WS", "ITEM", job_type="MaterializedLakeViews")
+        assert [i["id"] for i in out] == ["1"]
+
+    def test_filter_matches_schedules_spelling(self):
+        # The same runs must be found with EITHER spelling — this is the
+        # asymmetry that hid a failing schedule.
+        c = self._client()
+        out = list_job_instances(
+            c, "WS", "ITEM", job_type="RefreshMaterializedLakeViews"
+        )
+        assert [i["id"] for i in out] == ["1"]

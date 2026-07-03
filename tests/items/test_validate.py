@@ -309,6 +309,102 @@ class TestValidateItem:
         assert result.item_type == "Notebook"
 
 
+def _theme_report_json(
+    *, theme_name: str = "CY26SU02", registered: bool = True, base_theme: bool = True
+) -> str:
+    """A minimal PBIR ``definition/report.json`` with theme wiring knobs."""
+    payload: dict = {
+        "$schema": (
+            "https://developer.microsoft.com/json-schemas/fabric/item/"
+            "report/definition/report/3.3.0/schema.json"
+        ),
+    }
+    if base_theme:
+        payload["themeCollection"] = {
+            "baseTheme": {"name": theme_name, "type": "SharedResources"}
+        }
+    if registered:
+        payload["resourcePackages"] = [
+            {
+                "name": "SharedResources",
+                "type": "SharedResources",
+                "items": [
+                    {
+                        "name": theme_name,
+                        "path": f"BaseThemes/{theme_name}.json",
+                        "type": "BaseTheme",
+                    }
+                ],
+            }
+        ]
+    return json.dumps(payload)
+
+
+class TestValidateReportTheme:
+    """A PBIR report with broken base-theme wiring fails Fabric git-sync
+    import silently — validate_item must catch it before commit."""
+
+    _THEME_FILE = "StaticResources/SharedResources/BaseThemes/CY26SU02.json"
+
+    def _report(self, tmp_path: Path, files: dict[str, str]) -> Path:
+        return _create_item(
+            tmp_path, "rpt_theme", "Report", {"definition.pbir": "{}", **files}
+        )
+
+    def test_complete_theme_wiring_valid(self, tmp_path: Path):
+        item_dir = self._report(
+            tmp_path,
+            {
+                "definition/report.json": _theme_report_json(),
+                self._THEME_FILE: '{"name": "CY26SU02"}',
+            },
+        )
+        result = validate_item(item_dir)
+        assert result.valid
+
+    def test_missing_base_theme_errors(self, tmp_path: Path):
+        item_dir = self._report(
+            tmp_path,
+            {"definition/report.json": _theme_report_json(base_theme=False)},
+        )
+        result = validate_item(item_dir)
+        assert not result.valid
+        assert any("themeCollection.baseTheme" in e.message for e in result.errors)
+
+    def test_missing_theme_file_errors(self, tmp_path: Path):
+        item_dir = self._report(
+            tmp_path,
+            {"definition/report.json": _theme_report_json()},
+        )
+        result = validate_item(item_dir)
+        assert not result.valid
+        assert any("BaseThemes/CY26SU02.json" in e.message for e in result.errors)
+
+    def test_unregistered_theme_errors(self, tmp_path: Path):
+        item_dir = self._report(
+            tmp_path,
+            {
+                "definition/report.json": _theme_report_json(registered=False),
+                self._THEME_FILE: '{"name": "CY26SU02"}',
+            },
+        )
+        result = validate_item(item_dir)
+        assert not result.valid
+        assert any("resourcePackages" in e.message for e in result.errors)
+
+    def test_unreadable_report_json_errors(self, tmp_path: Path):
+        item_dir = self._report(tmp_path, {"definition/report.json": "{not json"})
+        result = validate_item(item_dir)
+        assert not result.valid
+        assert any("not readable JSON" in e.message for e in result.errors)
+
+    def test_legacy_report_layout_skips_theme_rule(self, tmp_path: Path):
+        # Legacy layout: report.json at the item root, no definition/ dir.
+        item_dir = _create_item(tmp_path, "rpt_legacy", "Report", {"report.json": "{}"})
+        result = validate_item(item_dir)
+        assert result.valid
+
+
 class TestValidateWorkspace:
     def test_valid_workspace_with_multiple_items(self, tmp_path: Path):
         _create_item(
