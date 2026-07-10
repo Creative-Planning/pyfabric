@@ -40,6 +40,22 @@ class TestLakehouseDdlLive:
             pytest.skip("PYFABRIC_TEST_WORKSPACE_ID not set")
         if real_lakehouse_id is None:
             pytest.skip("PYFABRIC_TEST_LAKEHOUSE_ID not set")
+        # A malformed GUID (e.g. a character dropped while copying from
+        # the portal) reaches OneLake as a bad filesystem path and comes
+        # back as a bare "400 Bad Request" — fail with a pointed message
+        # instead.
+        for label, value in (
+            ("PYFABRIC_TEST_WORKSPACE_ID", real_workspace_id),
+            ("PYFABRIC_TEST_LAKEHOUSE_ID", real_lakehouse_id),
+        ):
+            try:
+                uuid.UUID(value)
+            except ValueError:
+                pytest.fail(
+                    f"{label} is not a valid GUID: {value!r} "
+                    f"({len(value)} chars, expected 36) — re-copy the id "
+                    "from the portal (Settings → Identifier)"
+                )
         from pyfabric.client.auth import AuthError, FabricCredential
 
         self.ws_id = real_workspace_id
