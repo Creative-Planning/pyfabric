@@ -140,6 +140,17 @@ def validate_item(item_dir: Path) -> ValidationResult:
     if platform.metadata.type == "Report":
         _validate_report_theme(item_dir, result)
 
+    # Semantic models get the TMDL lint (collisions, compatibility level,
+    # orphan columns, DAX paren balance, lineageTag uniqueness). Error-
+    # severity issues fail validation; warnings are informational (regex
+    # parsing can't see calculated columns, etc.).
+    if platform.metadata.type == "SemanticModel":
+        from .validate_tmdl import lint_semantic_model
+
+        for issue in lint_semantic_model(item_dir):
+            target = result.errors if issue.severity == "error" else result.warnings
+            target.append(ValidationError(issue.message, issue.path))
+
     return result
 
 
