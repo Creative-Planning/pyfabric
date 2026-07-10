@@ -100,8 +100,8 @@ end-to-end.
 | `tests/test_deploy.py` — 14 unit tests with mocked client | **Done** (this PR) | Covers discovery, create-vs-update logic, scope filtering, dry-run. |
 | `tests/test_deploy_e2e.py` — live full-lifecycle test | **Done** (this PR) | Gated on `PYFABRIC_TEST_WORKSPACE_ID`. Exercises create → update → dry-run-orphan → unpublish → verify-survivor + cleanup. ~88s end-to-end. |
 | `docs/deploy.md` | **Done** (this PR) | API reference, recommended flow, REST-publish gotchas (the `.platform` mutation), out-of-scope notes. |
-| Parameter substitution (`pyfabric.deploy.substitute_parameters`) | **Open** — follow-up | Match the `parameter.yml` `find_replace` schema from fabric-cicd so consumers can migrate. Not blocking the deployment story. |
-| Dependency ordering on publish | **Open** — follow-up | v1 publishes in directory order; works for typical layouts. Add topological sort if/when a real consumer hits a "B references A" failure. |
+| Parameter substitution (`pyfabric.deploy.substitute_parameters`) | **Done** (#97 / PR #136, v0.1.11) | fabric-cicd `find_replace` schema; byte-faithful staged copy; `deploy` extra (PyYAML). |
+| Dependency ordering on publish | **Done** (#98 / PR #135, v0.1.11) | Kahn topological sort over Report→SemanticModel + DataPipeline→Notebook edges, type tiers otherwise; cycles raise `PublishOrderError`. |
 
 Done-when: `pyfabric.deploy` is the documented and tested path for
 repo-to-workspace deployment, and the `feedback_pyfabric_logical_id_pinning`
@@ -114,11 +114,12 @@ Parallel with C. Pure additive.
 | Issue | Outcome |
 | ----- | ------- |
 | [#89](https://github.com/Creative-Planning/pyfabric/issues/89) | `SemanticModel` builder gains `SqlDatabaseSource` for DirectLake over the `Sql.Database` endpoint. Enables consumers to move from import semantic models to DirectLake without leaving the builder API. |
-| [#90](https://github.com/Creative-Planning/pyfabric/issues/90) | Ship a default claude-memory entry establishing no-production-data-to-cloud-AI governance so consumers wiring up data-agent / LLM patterns inherit the safe default. |
+| [#90](https://github.com/Creative-Planning/pyfabric/issues/90) | **Done** (PR #132, v0.1.11) — `no_prod_data_to_cloud_ai.md` ships default-on in the claude-memory catalog, with a documented project-local override hook. |
 
 Done-when: a DirectLake semantic model can be authored entirely
 through the builder, and `pyfabric install-claude-memory` installs the
-governance entry by default.
+governance entry by default. ✓ (v0.1.11 also adds `SqlEndpointSource`
+for import models over schema-enabled lakehouses — #129.)
 
 ## Phase E — Phase 2 builder expansion
 
@@ -155,11 +156,11 @@ motivates each entry.
 
 | Issue | Notes |
 | ----- | ----- |
-| [#68](https://github.com/Creative-Planning/pyfabric/issues/68) | claude-memory: notebook Resources/builtin wheel pattern. Pair with Phase B `#73`. |
-| [#71](https://github.com/Creative-Planning/pyfabric/issues/71) | `open_mirror_landing_zone.md` anti-patterns + caller-stamped CDC. Standalone doc work. |
-| [#52](https://github.com/Creative-Planning/pyfabric/issues/52) | Live DDL integration tests against a dedicated validation workspace. Same workspace can host the Phase C roundtrip test. |
-| [#55](https://github.com/Creative-Planning/pyfabric/issues/55) | `NotebookBuilder.add_sparksql` — explicitly blocked on a real-world fixture. Defer until one lands. |
-| [#42](https://github.com/Creative-Planning/pyfabric/issues/42) | Tier 3: DirectLake partition swapper, TMDL linter, sempy bridge. Tackle after C; the partition swapper composes well with the `SqlDatabaseSource` work from D. |
+| [#68](https://github.com/Creative-Planning/pyfabric/issues/68) | **Done** — `notebook_wheel_resources_pattern.md` shipped in the catalog; issue closed. |
+| [#71](https://github.com/Creative-Planning/pyfabric/issues/71) | **Done** — anti-patterns + caller-stamped CDC shipped in `open_mirror_landing_zone.md`; issue closed. |
+| [#52](https://github.com/Creative-Planning/pyfabric/issues/52) | **Done** (PR #138, v0.1.11) — live DDL e2e suite gated on `PYFABRIC_TEST_WORKSPACE_ID` + `PYFABRIC_TEST_LAKEHOUSE_ID`. Its first field runs caught two real `rename_schema` bugs (fixed in PR #140). |
+| [#55](https://github.com/Creative-Planning/pyfabric/issues/55) | **Done** (PR #141, v0.1.11) — fixture captured live per the runbook; `add_sparksql` byte-exact to it (sparksql META has no `language_group`). |
+| [#42](https://github.com/Creative-Planning/pyfabric/issues/42) | **Partially done** (PR #134, v0.1.11) — TMDL linter shipped (`lint_semantic_model`, 5 rules, wired into `validate_item`). Still open: DirectLake partition swapper, sempy bridge. |
 
 ## Dependency graph
 

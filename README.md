@@ -17,10 +17,13 @@ pip install pyfabric
 ### Optional dependencies
 
 ```bash
-pip install pyfabric[azure]    # Azure authentication and REST client
-pip install pyfabric[data]     # OneLake and SQL data access
-pip install pyfabric[testing]  # DuckDB Spark mock and pytest fixtures
-pip install pyfabric[all]      # All optional dependencies
+pip install pyfabric[azure]         # Azure authentication and REST client
+pip install pyfabric[data]          # OneLake and SQL data access
+pip install pyfabric[lakehouse-io]  # Delta table writes (deltalake + pyarrow)
+pip install pyfabric[testing]       # DuckDB Spark mock and pytest fixtures
+pip install pyfabric[dataagent]     # Data agent MCP query client
+pip install pyfabric[deploy]        # parameter.yml substitution (PyYAML)
+pip install pyfabric[all]           # All optional dependencies
 ```
 
 ### AI assistant context (optional)
