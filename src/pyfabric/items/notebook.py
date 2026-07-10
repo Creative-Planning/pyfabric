@@ -48,11 +48,12 @@ CellLanguage = Literal["python", "sparksql"]
 
 
 # Cell language → language_group mapping for the per-cell trailing META
-# block. Keyed on the concrete cell language; the language_group is the
-# kernel family Fabric associates with each language.
+# block. Fabric's canonical git bytes carry a language_group only for
+# python cells; a sparksql cell's META block is just
+# ``{"language": "sparksql"}`` (verified against a Fabric-emitted
+# fixture — see tests/fixtures/notebooks/nb_sparksql.Notebook).
 _LANGUAGE_GROUP: dict[CellLanguage, str] = {
     "python": "synapse_pyspark",
-    "sparksql": "synapse_pyspark",
 }
 
 
@@ -172,6 +173,17 @@ class NotebookBuilder:
     def add_python(self, code: str) -> "NotebookBuilder":
         """Append a Python code cell."""
         self._cells.append(_Cell(kind="code", content=code, language="python"))
+        return self
+
+    def add_sparksql(self, sql: str) -> "NotebookBuilder":
+        """Append a Spark SQL cell.
+
+        Emits a regular ``# CELL`` block whose trailing META block is
+        ``{"language": "sparksql"}`` — the language-switched cell form
+        Fabric produces when a cell's language is set to Spark SQL in
+        the portal. The SQL body is raw text (no ``%%sql`` magic).
+        """
+        self._cells.append(_Cell(kind="code", content=sql, language="sparksql"))
         return self
 
     def add_parameters_cell(self, code: str) -> "NotebookBuilder":
@@ -367,13 +379,13 @@ class NotebookBuilder:
     def _render_code_cell(
         self, code: str, language: CellLanguage, *, parameters: bool = False
     ) -> str:
-        meta_body = json.dumps(
-            {
-                "language": language,
-                "language_group": _LANGUAGE_GROUP[language],
-            },
-            indent=2,
-        )
+        # language_group appears only for languages that have one in
+        # Fabric's canonical output (python); sparksql cells carry just
+        # the language key — see the nb_sparksql fixture.
+        meta: dict[str, str] = {"language": language}
+        if language in _LANGUAGE_GROUP:
+            meta["language_group"] = _LANGUAGE_GROUP[language]
+        meta_body = json.dumps(meta, indent=2)
         marker = (
             "# PARAMETERS CELL ********************"
             if parameters
