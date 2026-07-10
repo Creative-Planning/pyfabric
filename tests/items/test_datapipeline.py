@@ -19,6 +19,7 @@ import pytest
 
 from pyfabric.items.datapipeline import (
     DataPipelineBuilder,
+    PipelineParameter,
     notebook_logical_id,
 )
 from pyfabric.items.normalize import canonical_bytes
@@ -223,3 +224,94 @@ class TestSaveToDisk:
         assert pf.metadata.type == "DataPipeline"
         assert pf.metadata.display_name == "pl_sample"
         assert pf.config.logical_id == "55555555-5555-5555-5555-555555555555"
+
+
+class TestPipelineParameters:
+    """Issue #102: pipeline-level parameters + Expression-bound activity params."""
+
+    def test_declares_parameters_block_after_activities(self) -> None:
+        b = DataPipelineBuilder()
+        b.add_pipeline_parameter("pdf_path", default_value="")
+        b.add_notebook_activity("Extract", _NB_A)
+        props = json.loads(b.to_pipeline_content())["properties"]
+        assert list(props.keys()) == ["activities", "parameters"]
+        assert props["parameters"] == {
+            "pdf_path": {"type": "string", "defaultValue": ""}
+        }
+
+    def test_description_stays_first_in_key_order(self) -> None:
+        b = DataPipelineBuilder(description="Parameterized.")
+        b.add_pipeline_parameter("n", type="int", default_value=1)
+        props = json.loads(b.to_pipeline_content())["properties"]
+        assert list(props.keys()) == ["description", "activities", "parameters"]
+
+    def test_no_parameters_block_when_none_declared(self) -> None:
+        b = _build_sample()
+        assert "parameters" not in json.loads(b.to_pipeline_content())["properties"]
+
+    def test_expression_bound_activity_parameter(self) -> None:
+        b = DataPipelineBuilder()
+        ref = b.add_pipeline_parameter("pdf_path", default_value="")
+        b.add_notebook_activity("Extract", _NB_A, parameters={"pdf_path": ref, "n": 5})
+        params = json.loads(b.to_pipeline_content())["properties"]["activities"][0][
+            "typeProperties"
+        ]["parameters"]
+        assert params["pdf_path"] == {
+            "value": {
+                "value": "@pipeline().parameters.pdf_path",
+                "type": "Expression",
+            },
+            "type": "string",
+        }
+        # Plain values keep the literal shape (back-compat).
+        assert params["n"] == {"value": 5, "type": "int"}
+
+    def test_expression_type_comes_from_declaration(self) -> None:
+        b = DataPipelineBuilder()
+        ref = b.add_pipeline_parameter("retries", type="int", default_value=3)
+        b.add_notebook_activity("Extract", _NB_A, parameters={"r": ref})
+        params = json.loads(b.to_pipeline_content())["properties"]["activities"][0][
+            "typeProperties"
+        ]["parameters"]
+        assert params["r"]["type"] == "int"
+
+    def test_direct_reference_construction_works(self) -> None:
+        b = DataPipelineBuilder()
+        b.add_pipeline_parameter("pdf_path")
+        b.add_notebook_activity(
+            "Extract", _NB_A, parameters={"p": PipelineParameter("pdf_path")}
+        )  # no raise
+
+    def test_capitalized_type_rejected_with_silent_drop_explanation(self) -> None:
+        b = DataPipelineBuilder()
+        with pytest.raises(ValueError, match="silently drops"):
+            b.add_pipeline_parameter("pdf_path", type="String")
+
+    def test_securestring_case_enforced(self) -> None:
+        b = DataPipelineBuilder()
+        with pytest.raises(ValueError, match="secureString"):
+            b.add_pipeline_parameter("secret", type="securestring")
+
+    def test_unknown_type_rejected_listing_valid_set(self) -> None:
+        b = DataPipelineBuilder()
+        with pytest.raises(ValueError, match="valid types"):
+            b.add_pipeline_parameter("x", type="guid")
+
+    def test_duplicate_parameter_name_rejected(self) -> None:
+        b = DataPipelineBuilder()
+        b.add_pipeline_parameter("x")
+        with pytest.raises(ValueError, match="duplicate pipeline parameter"):
+            b.add_pipeline_parameter("x")
+
+    def test_undeclared_reference_rejected(self) -> None:
+        b = DataPipelineBuilder()
+        with pytest.raises(ValueError, match="undeclared pipeline parameter"):
+            b.add_notebook_activity(
+                "Extract", _NB_A, parameters={"p": PipelineParameter("nope")}
+            )
+
+    def test_default_value_omitted_when_none(self) -> None:
+        b = DataPipelineBuilder()
+        b.add_pipeline_parameter("flag", type="bool")
+        props = json.loads(b.to_pipeline_content())["properties"]
+        assert props["parameters"] == {"flag": {"type": "bool"}}
