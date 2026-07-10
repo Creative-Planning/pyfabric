@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import heapq
 import json
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -374,3 +376,152 @@ def unpublish_orphans(
             dry_run=dry_run,
         )
     return results
+
+
+# ── Parameter substitution (multi-environment promotion) ────────────────────
+
+
+def _load_find_replace(
+    parameter_yml: Path,
+) -> list[tuple[str, dict[str, str]]]:
+    """Parse and validate a fabric-cicd-style ``parameter.yml``.
+
+    Expected schema::
+
+        find_replace:
+          - find_value: "<DEV_LAKEHOUSE_ID>"
+            replace_value:
+              DEV: "1111..."
+              PROD: "2222..."
+
+    Returns ``[(find_value, {env: replace_value})]`` in file order.
+    """
+    try:
+        import yaml
+    except ImportError as e:  # pragma: no cover - exercised via sys.modules patch
+        raise ImportError(
+            "substitute_parameters needs PyYAML — install the deploy extra: "
+            "pip install 'pyfabric[deploy]'"
+        ) from e
+
+    if not parameter_yml.is_file():
+        raise FileNotFoundError(
+            f"parameter file not found: {parameter_yml} — substitution "
+            "refuses to silently no-op"
+        )
+    data = yaml.safe_load(parameter_yml.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or "find_replace" not in data:
+        raise ValueError(
+            f"{parameter_yml}: expected a mapping with a 'find_replace' list "
+            "(fabric-cicd parameter.yml schema)"
+        )
+    entries = data["find_replace"]
+    if not isinstance(entries, list):
+        raise ValueError(f"{parameter_yml}: 'find_replace' must be a list")
+
+    parsed: list[tuple[str, dict[str, str]]] = []
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict) or "find_value" not in entry:
+            raise ValueError(f"{parameter_yml}: find_replace[{i}] needs a 'find_value'")
+        replace_value = entry.get("replace_value")
+        if not isinstance(replace_value, dict) or not replace_value:
+            raise ValueError(
+                f"{parameter_yml}: find_replace[{i}] "
+                f"({entry['find_value']!r}) needs a non-empty "
+                "'replace_value' environment map"
+            )
+        parsed.append(
+            (
+                str(entry["find_value"]),
+                {str(k): str(v) for k, v in replace_value.items()},
+            )
+        )
+    return parsed
+
+
+def substitute_parameters(
+    repo_dir: Path | str,
+    parameter_yml: Path | str,
+    *,
+    environment: str,
+    output_dir: Path | str | None = None,
+) -> Path:
+    """Apply ``parameter.yml`` find/replace values for ``environment``.
+
+    Copies ``repo_dir`` and replaces every ``find_value`` string with its
+    ``replace_value[environment]`` in all text-decodable files, so the
+    same artifact bundle can promote across DEV / PPE / PROD workspaces
+    with different lakehouse ids, connection strings, etc. The returned
+    directory is suitable as input to :func:`publish_repo`::
+
+        staged = substitute_parameters(
+            "definitions/", "parameter.yml", environment="PROD"
+        )
+        publish_repo(client, prod_ws_id, staged, item_types_in_scope=[...])
+
+    The copy is **byte-faithful**: text files keep their exact bytes
+    except the replaced spans (no re-normalization), and binary files
+    (e.g. ``Resources/builtin/*.whl``) are copied untouched. The source
+    ``repo_dir`` is never modified.
+
+    Args:
+        parameter_yml: fabric-cicd-style ``find_replace`` file (see
+            :func:`_load_find_replace` for the schema). Missing file →
+            ``FileNotFoundError`` (never a silent no-op).
+        environment: Key into each entry's ``replace_value`` map. An
+            entry without this key raises ``ValueError`` naming the
+            ``find_value`` and the environments it does define.
+        output_dir: Destination root. Defaults to a fresh temp
+            directory the caller is responsible for cleaning up.
+
+    Requires the ``deploy`` extra (``pip install 'pyfabric[deploy]'``).
+    """
+    repo_dir = Path(repo_dir)
+    if not repo_dir.is_dir():
+        raise FileNotFoundError(f"repo_dir not found: {repo_dir}")
+    replacements = _load_find_replace(Path(parameter_yml))
+
+    resolved: list[tuple[str, str]] = []
+    for find_value, env_map in replacements:
+        if environment not in env_map:
+            available = ", ".join(sorted(env_map))
+            raise ValueError(
+                f"parameter {find_value!r} has no value for environment "
+                f"{environment!r} (available: {available})"
+            )
+        resolved.append((find_value, env_map[environment]))
+
+    if output_dir is None:
+        out_root = Path(tempfile.mkdtemp(prefix="pyfabric-substitute-"))
+    else:
+        out_root = Path(output_dir)
+        out_root.mkdir(parents=True, exist_ok=True)
+
+    substituted_files = 0
+    for src in repo_dir.rglob("*"):
+        rel = src.relative_to(repo_dir)
+        dest = out_root / rel
+        if src.is_dir():
+            dest.mkdir(parents=True, exist_ok=True)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        raw = src.read_bytes()
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            shutil.copyfile(src, dest)  # binary: byte-for-byte
+            continue
+        original = text
+        for find_value, replace_value in resolved:
+            text = text.replace(find_value, replace_value)
+        if text != original:
+            substituted_files += 1
+        dest.write_bytes(text.encode("utf-8"))
+
+    log.info(
+        "parameters_substituted",
+        environment=environment,
+        files_changed=substituted_files,
+        output_dir=str(out_root),
+    )
+    return out_root
