@@ -13,6 +13,7 @@ from pyfabric.items.semantic_model import (
     SemanticModel,
     SemanticModelError,
     SqlDatabaseSource,
+    SqlEndpointSource,
     SqlQuerySource,
     Table,
     arrow_to_tmdl,
@@ -843,3 +844,162 @@ class TestLakehouseSourceRegression:
             '["GoldWorkspaceId", "GoldLakehouseId", "Gold", '
             '"dim_section", "fact_status"]'
         ) in model_tmdl
+
+
+@pytest.fixture
+def sql_endpoint() -> SqlEndpointSource:
+    return SqlEndpointSource(
+        name="lh_gold",
+        server="srv.datawarehouse.fabric.microsoft.com",
+        database="lh_gold",
+    )
+
+
+def _endpoint_table(source: SqlEndpointSource, schema: str = "gold") -> Table:
+    return Table(
+        name="fact_orders",
+        source=source,
+        schema=schema,
+        description="Orders fact.",
+        columns=[Column("order_no", "string", description="Order number.")],
+    )
+
+
+class TestSqlEndpointSource:
+    """Issue #129: import-mode source for schema-enabled lakehouses."""
+
+    def test_invalid_identifier_rejected(self) -> None:
+        with pytest.raises(ValueError, match="M identifier"):
+            SqlEndpointSource(name="bad name", server="s", database="d")
+
+    def test_emits_navigation_expression_and_import_partition(
+        self, tmp_path: Path, sql_endpoint: SqlEndpointSource
+    ) -> None:
+        # Expression + partition shapes match the field-proven
+        # SQL-analytics-endpoint navigation that refreshes successfully
+        # against a schema-enabled lakehouse.
+        sm = SemanticModel(
+            name="sm_endpoint",
+            description="SQL endpoint import test model.",
+            sources=[sql_endpoint],
+            tables=[_endpoint_table(sql_endpoint)],
+        )
+        item_dir = sm.save_to_disk(tmp_path)
+
+        expressions = (item_dir / "definition" / "expressions.tmdl").read_text("utf-8")
+        assert (
+            "expression lh_gold =\n"
+            "\t\tlet\n"
+            '\t\t    Source = Sql.Database("srv.datawarehouse.fabric.microsoft.com", "lh_gold")\n'
+            "\t\tin\n"
+            "\t\t    Source\n"
+        ) in expressions
+        # No Lakehouse.Contents and no parameter expressions.
+        assert "Lakehouse.Contents" not in expressions
+        assert "IsParameterQuery" not in expressions
+
+        table_tmdl = (
+            item_dir / "definition" / "tables" / "fact_orders.tmdl"
+        ).read_text("utf-8")
+        assert (
+            "\tpartition fact_orders = m\n"
+            "\t\tmode: import\n"
+            "\t\tsource =\n"
+            "\t\t\t\tlet\n"
+            "\t\t\t\t    Source = lh_gold,\n"
+            '\t\t\t\t    tbl = Source{[Schema="gold", Item="fact_orders"]}[Data]\n'
+            "\t\t\t\tin\n"
+            "\t\t\t\t    tbl"
+        ) in table_tmdl
+
+    def test_dbo_schema_also_works(
+        self, tmp_path: Path, sql_endpoint: SqlEndpointSource
+    ) -> None:
+        sm = SemanticModel(
+            name="sm_endpoint",
+            description="SQL endpoint dbo test model.",
+            sources=[sql_endpoint],
+            tables=[_endpoint_table(sql_endpoint, schema="dbo")],
+        )
+        item_dir = sm.save_to_disk(tmp_path)
+        table_tmdl = (
+            item_dir / "definition" / "tables" / "fact_orders.tmdl"
+        ).read_text("utf-8")
+        assert 'Source{[Schema="dbo", Item="fact_orders"]}[Data]' in table_tmdl
+
+    def test_query_order_lists_expression_then_tables(
+        self, tmp_path: Path, sql_endpoint: SqlEndpointSource
+    ) -> None:
+        sm = SemanticModel(
+            name="sm_endpoint",
+            description="SQL endpoint query-order test model.",
+            sources=[sql_endpoint],
+            tables=[_endpoint_table(sql_endpoint)],
+        )
+        item_dir = sm.save_to_disk(tmp_path)
+        model_tmdl = (item_dir / "definition" / "model.tmdl").read_text("utf-8")
+        assert '["lh_gold", "fact_orders"]' in model_tmdl
+
+    def test_table_query_rejected(self, sql_endpoint: SqlEndpointSource) -> None:
+        sm = SemanticModel(
+            name="sm_endpoint",
+            description="Query misuse test model.",
+            sources=[sql_endpoint],
+            tables=[
+                Table(
+                    name="t",
+                    source=sql_endpoint,
+                    description="T.",
+                    columns=[Column("c", "string", description="C.")],
+                    query="SELECT 1",
+                )
+            ],
+        )
+        errs = sm.validate()
+        assert any("only valid with a" in e for e in errs)
+
+
+class TestLakehouseSourceSchemaValidation:
+    """Issue #129: LakehouseSource + non-dbo schema can never refresh."""
+
+    def test_non_dbo_schema_is_hard_error(self, gold: LakehouseSource) -> None:
+        sm = SemanticModel(
+            name="sm_bad",
+            description="Non-dbo lakehouse test model.",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="fact_x",
+                    source=gold,
+                    schema="bc",
+                    description="Fact.",
+                    columns=[Column("k", "string", description="Key.")],
+                )
+            ],
+        )
+        errs = sm.validate()
+        assert any(
+            "not addressable via LakehouseSource" in e and "SqlEndpointSource" in e
+            for e in errs
+        )
+
+    def test_save_to_disk_raises(self, tmp_path: Path, gold: LakehouseSource) -> None:
+        sm = SemanticModel(
+            name="sm_bad",
+            description="Non-dbo lakehouse test model.",
+            sources=[gold],
+            tables=[
+                Table(
+                    name="fact_x",
+                    source=gold,
+                    schema="bc",
+                    description="Fact.",
+                    columns=[Column("k", "string", description="Key.")],
+                )
+            ],
+        )
+        with pytest.raises(SemanticModelError, match="not addressable"):
+            sm.save_to_disk(tmp_path)
+
+    def test_dbo_schema_still_fine(self, minimal_model: SemanticModel) -> None:
+        assert minimal_model.validate() == []
