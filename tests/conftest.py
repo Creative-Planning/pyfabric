@@ -227,3 +227,15 @@ def real_workspace_id() -> str | None:
     contributors who don't have a validation workspace.
     """
     return os.environ.get("PYFABRIC_TEST_WORKSPACE_ID") or None
+
+
+@pytest.fixture
+def real_lakehouse_id() -> str | None:
+    """Lakehouse ID (GUID) inside the validation workspace for live DDL
+    E2E testing. The lakehouse should be schema-enabled (tests skip with
+    setup instructions otherwise).
+
+    Set the PYFABRIC_TEST_LAKEHOUSE_ID environment variable to enable.
+    Returns None if the env var is not set so tests skip cleanly.
+    """
+    return os.environ.get("PYFABRIC_TEST_LAKEHOUSE_ID") or None

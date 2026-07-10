@@ -213,3 +213,20 @@ E2E validation as part of your test suite:
 ```bash
 PYFABRIC_TEST_WORKSPACE=/path/to/workspace pytest -m e2e
 ```
+
+## Live E2E environment variables
+
+All `@pytest.mark.e2e` tests skip cleanly when their variables are unset,
+so the default suite never needs Fabric access.
+
+| Variable | Used by | Meaning |
+| --- | --- | --- |
+| `PYFABRIC_TEST_WORKSPACE` | `test_validate_e2e.py` | Local path of a git-synced workspace folder |
+| `PYFABRIC_TEST_WORKSPACE_ID` | REST lifecycle e2e (deploy, notebook, environment) + DDL | Validation workspace GUID |
+| `PYFABRIC_TEST_LAKEHOUSE_ID` | `tests/data/test_lakehouse_ddl_e2e.py` | A **schema-enabled** lakehouse GUID inside the validation workspace |
+
+The live DDL suite works inside a throwaway `it_<hex8>` schema per run
+and drops it in teardown (pass or fail). If a run is killed hard
+(Ctrl-C at the wrong moment), an orphaned `it_*` schema can remain —
+they carry no data anyone needs and are always safe to remove with
+`pyfabric.data.lakehouse.drop_schema` or from the portal.
