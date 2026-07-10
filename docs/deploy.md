@@ -122,6 +122,29 @@ preserved through REST publish + `getDefinition`. If you mix the two
 paths, be aware: the same artifact authored once may appear under
 different identity in each path.
 
+## Publish ordering
+
+`publish_repo` publishes in **dependency order**, not directory order:
+
+- **Report → SemanticModel**: a Report publishes after the model its
+  `definition.pbir` references via `datasetReference.byPath.path`.
+- **DataPipeline → Notebook**: a pipeline publishes after every
+  Notebook whose git logicalId appears as an activity `notebookId`
+  (including activities nested in ForEach / IfCondition / Until
+  containers).
+- Everything else follows a coarse **type tier**: Lakehouse /
+  Warehouse / Environment / MirroredDatabase first, then Notebook,
+  then SemanticModel, then DataPipeline / Report / DataAgent. Ties
+  break on directory name, so the order is fully deterministic.
+
+Limitations: a Notebook's attached Environment / Lakehouse reference
+is a **workspace object id**, not a local logicalId, so those pairs
+are ordered only by the type tier (which puts the Environment /
+Lakehouse first anyway). References that point outside the repo — or
+at artifacts excluded by `item_types_in_scope` — are ignored with a
+debug log. A dependency **cycle** raises `PublishOrderError` naming
+the participating artifacts.
+
 ## Not currently in scope
 
 These would be follow-ups, not v1:
@@ -130,10 +153,6 @@ These would be follow-ups, not v1:
   find-replace flow that some external CI/CD tools provide. If you
   need per-environment value substitution, do it in your CI pipeline
   before calling `publish_repo`.
-- **Dependency ordering.** `publish_repo` walks artifacts in directory
-  order. If item B references item A (e.g., a notebook attaches an
-  environment), publish A before B by structuring the repo or by
-  calling `publish_repo` twice with different scopes.
 - **Concurrent publish.** Items publish serially. Fast enough for
   typical workspaces; parallelize externally if needed.
 
