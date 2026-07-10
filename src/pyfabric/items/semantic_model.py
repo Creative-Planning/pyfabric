@@ -98,6 +98,7 @@ from typing import Literal
 import structlog
 
 from pyfabric.items.normalize import write_artifact_file
+from pyfabric.items.types import resolve_logical_id
 from pyfabric.items.validate_tmdl import check_name_collisions
 
 log = structlog.get_logger()
@@ -434,7 +435,11 @@ class SemanticModel:
     culture: str = "en-US"
     annotations: dict[str, str] = field(default_factory=dict)
     strict_descriptions: bool = True
-    logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # None = "not pinned by the caller": save_to_disk reuses the logicalId
+    # of an existing .platform in the target directory, so rebuild scripts
+    # are idempotent on item identity. A fresh uuid4 is minted only when
+    # neither an explicit id nor an existing .platform is available.
+    logical_id: str | None = None
 
     # ── Validation ──────────────────────────────────────────────────────────
 
@@ -585,6 +590,7 @@ class SemanticModel:
         item_dir = output_dir / f"{self.name}.SemanticModel"
         definition = item_dir / "definition"
 
+        self.logical_id = resolve_logical_id(item_dir, self.logical_id)
         write_artifact_file(item_dir / ".platform", self._emit_platform())
         write_artifact_file(item_dir / "definition.pbism", self._emit_pbism())
         write_artifact_file(definition / "database.tmdl", self._emit_database())
@@ -631,6 +637,8 @@ class SemanticModel:
     def _emit_platform(self) -> str:
         import json
 
+        if self.logical_id is None:
+            self.logical_id = str(uuid.uuid4())
         return json.dumps(
             {
                 "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",

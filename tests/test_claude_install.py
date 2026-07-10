@@ -28,6 +28,28 @@ class TestPackagedMemory:
         names = [n for n, _ in _iter_package_memory()]
         assert names[0] == "MEMORY.md"
 
+    def test_ships_governance_memory(self):
+        """Issue #90: the no-prod-data-to-cloud-AI governance memory is
+        part of the default install set."""
+        catalog = dict(_iter_package_memory())
+        assert "no_prod_data_to_cloud_ai.md" in catalog
+        body = catalog["no_prod_data_to_cloud_ai.md"]
+        # Well-formed frontmatter (else emit-context inlines the --- block).
+        assert body.startswith("---\n")
+        assert body.count("---\n") >= 2
+        # The override hook must be documented in the memory itself.
+        assert "override" in body.lower()
+
+    def test_index_references_every_catalog_file(self):
+        """Every shipped memory (except the index itself) has a MEMORY.md
+        index line, so installs surface all of them."""
+        catalog = dict(_iter_package_memory())
+        index = catalog["MEMORY.md"]
+        missing = [
+            name for name in catalog if name != "MEMORY.md" and f"({name})" not in index
+        ]
+        assert not missing, f"catalog files missing from MEMORY.md index: {missing}"
+
 
 class TestMergeMemoryIndex:
     def test_merge_into_empty(self):

@@ -252,7 +252,9 @@ class EnvironmentBuilder:
         artifact_dir = Path(output_dir) / bundle.dir_name
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        write_artifact_file(artifact_dir / ".platform", bundle.platform_json())
+        write_artifact_file(
+            artifact_dir / ".platform", bundle.platform_json_for(artifact_dir)
+        )
 
         sparkcompute_path = artifact_dir / _SPARKCOMPUTE_PATH
         sparkcompute_path.parent.mkdir(parents=True, exist_ok=True)
