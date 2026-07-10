@@ -170,7 +170,9 @@ class MirroredDatabaseBuilder:
         artifact_dir = Path(output_dir) / bundle.dir_name
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-        write_artifact_file(artifact_dir / ".platform", bundle.platform_json())
+        write_artifact_file(
+            artifact_dir / ".platform", bundle.platform_json_for(artifact_dir)
+        )
         write_artifact_file(artifact_dir / "mirroring.json", self.to_mirroring_json())
         log.info(
             "mirrored_database_saved",

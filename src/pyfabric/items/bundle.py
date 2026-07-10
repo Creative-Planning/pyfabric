@@ -28,7 +28,7 @@ Usage:
 import base64
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ import structlog
 
 from pyfabric.items.crud import encode_part
 from pyfabric.items.normalize import write_artifact_file
+from pyfabric.items.types import resolve_logical_id
 
 log = structlog.get_logger()
 
@@ -55,15 +56,30 @@ class ArtifactBundle:
     display_name: str  # e.g. "NB_My_Notebook"
     parts: dict[str, str | bytes]  # {relative_path: content}
     description: str = ""
-    logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # None = "not pinned by the caller": disk saves reuse an existing
+    # .platform logicalId; otherwise a fresh uuid4 is minted on first emit.
+    logical_id: str | None = None
 
     @property
     def dir_name(self) -> str:
         """Directory name in git-sync format: {DisplayName}.{ItemType}"""
         return f"{self.display_name}.{self.item_type}"
 
+    def platform_json_for(self, artifact_dir: str | Path) -> str:
+        """Generate .platform content for a disk save into ``artifact_dir``.
+
+        Reuses the logicalId of an existing ``artifact_dir/.platform``
+        when the caller didn't pin one, so rebuild scripts are idempotent
+        on item identity (regenerated ids break workspace git-sync with a
+        delete+add name clash).
+        """
+        self.logical_id = resolve_logical_id(artifact_dir, self.logical_id)
+        return self.platform_json()
+
     def platform_json(self) -> str:
         """Generate the .platform file content."""
+        if self.logical_id is None:
+            self.logical_id = str(uuid.uuid4())
         return json.dumps(
             {
                 "$schema": _PLATFORM_SCHEMA,
@@ -102,7 +118,7 @@ def save_to_disk(bundle: ArtifactBundle, output_dir: str | Path) -> Path:
     # match Fabric's canonical form (LF, no BOM, per-file-type trailing
     # newline). Binary parts fall through canonical_bytes unchanged.
     platform_path = artifact_dir / ".platform"
-    write_artifact_file(platform_path, bundle.platform_json())
+    write_artifact_file(platform_path, bundle.platform_json_for(artifact_dir))
     log.debug("Wrote %s", platform_path)
 
     for rel_path, content in bundle.parts.items():
