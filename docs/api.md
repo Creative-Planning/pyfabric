@@ -232,7 +232,9 @@ trailing newline.
 | Function / Class | Description |
 | ----------------- | ------------- |
 | `DataPipelineBuilder(description="")` | Builder for a pipeline definition. |
-| `.add_notebook_activity(name, notebook, *, parameters=None, depends_on=None, workspace_id=None)` | Add a `TridentNotebook` activity. `notebook` is a `.Notebook` dir, its `.platform`, or a logicalId GUID. Returns the activity name. |
+| `.add_pipeline_parameter(name, *, type="string", default_value=None)` | Declare a pipeline-level parameter (`properties.parameters`). `type` must be lowercase (`string`, `int`, `float`, `bool`, `array`, `object`, `secureString`) — the capitalized ADF form makes Fabric silently drop the whole block on git-sync, so it's rejected here. Returns a `PipelineParameter` reference. |
+| `PipelineParameter(name)` | Reference to a declared pipeline parameter. Pass as an activity-parameter value to emit the Expression binding `@pipeline().parameters.<name>` instead of a literal. |
+| `.add_notebook_activity(name, notebook, *, parameters=None, depends_on=None, workspace_id=None)` | Add a `TridentNotebook` activity. `notebook` is a `.Notebook` dir, its `.platform`, or a logicalId GUID. `parameters` values may be literals or `PipelineParameter` references. Returns the activity name. |
 | `.add_semantic_model_refresh(name, *, dataset_id, connection, depends_on=None)` | Add a `PBISemanticModelRefresh` activity. `connection` must be a real provisioned Power BI connection id. |
 | `.add_activity(name, activity_type, type_properties, *, depends_on=None, external_references=None)` | Generic activity escape hatch. |
 | `.to_pipeline_content()` | Render `pipeline-content.json` as a string. |
@@ -251,6 +253,19 @@ pl = DataPipelineBuilder(description="Daily refresh")
 pl.add_notebook_activity("Extract", "ws/nb_extract.Notebook", parameters={"path": ""})
 pl.add_notebook_activity("Transform", "ws/nb_transform.Notebook", depends_on=["Extract"])
 pl.save_to_disk("ws/", display_name="pl_daily")
+```
+
+**Parameterized pipeline** (trigger-time parameters bound to an activity):
+
+```python
+pl = DataPipelineBuilder(description="Parameterized refresh")
+pdf_path = pl.add_pipeline_parameter("pdf_path", default_value="")
+pl.add_notebook_activity(
+    "Extract", "ws/nb_extract.Notebook", parameters={"pdf_path": pdf_path}
+)
+# emits: properties.parameters.pdf_path = {"type": "string", "defaultValue": ""}
+# and the activity param as
+# {"value": {"value": "@pipeline().parameters.pdf_path", "type": "Expression"}, "type": "string"}
 ```
 
 ---
