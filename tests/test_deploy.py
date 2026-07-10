@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from pyfabric.deploy import (
+    PublishOrderError,
     PublishResult,
     UnpublishResult,
     publish_repo,
@@ -217,3 +222,191 @@ class TestEdgeCases:
         client.get_paged.return_value = []
         result = unpublish_orphans(client, "ws-x", str(tmp_path))
         assert result == []
+
+
+# ── Dependency ordering (issue #98) ─────────────────────────────────────────
+
+
+def _make_item(
+    base: Path,
+    display_name: str,
+    item_type: str,
+    *,
+    logical_id: str | None = None,
+    files: dict[str, str] | None = None,
+) -> Path:
+    """Write a minimal artifact dir: .platform + optional definition files."""
+    item_dir = base / f"{display_name}.{item_type}"
+    item_dir.mkdir(parents=True, exist_ok=True)
+    platform = {
+        "metadata": {"type": item_type, "displayName": display_name},
+        "config": {"version": "2.0", "logicalId": logical_id or str(uuid.uuid4())},
+    }
+    (item_dir / ".platform").write_text(json.dumps(platform), encoding="utf-8")
+    for rel, content in (files or {}).items():
+        p = item_dir / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    return item_dir
+
+
+def _pbir(model_dir_name: str) -> str:
+    return json.dumps(
+        {"datasetReference": {"byPath": {"path": f"../{model_dir_name}"}}}
+    )
+
+
+def _pipeline_content(*notebook_ids: str, nested: bool = False) -> str:
+    activities: list[dict[str, object]] = [
+        {
+            "type": "TridentNotebook",
+            "typeProperties": {"notebookId": nb_id},
+            "name": f"a{i}",
+        }
+        for i, nb_id in enumerate(notebook_ids)
+    ]
+    if nested:
+        activities = [
+            {
+                "type": "ForEach",
+                "typeProperties": {"activities": activities},
+                "name": "loop",
+            }
+        ]
+    return json.dumps({"properties": {"activities": activities}})
+
+
+def _publish_order(client: MagicMock, tmp_path: Path, **kwargs: object) -> list[str]:
+    client.get_paged.return_value = []
+    client.post.return_value = {"id": "x"}
+    results = publish_repo(client, "ws-x", tmp_path, **kwargs)  # type: ignore[arg-type]
+    return [r.display_name for r in results]
+
+
+class TestDependencyOrder:
+    def test_report_publishes_after_its_semantic_model(self, tmp_path: Path) -> None:
+        # 'a_report' sorts before 'z_model' in directory order — the edge
+        # must override that.
+        _make_item(
+            tmp_path, "z_model", "SemanticModel", files={"definition.pbism": "{}"}
+        )
+        _make_item(
+            tmp_path,
+            "a_report",
+            "Report",
+            files={"definition.pbir": _pbir("z_model.SemanticModel")},
+        )
+        order = _publish_order(MagicMock(), tmp_path)
+        assert order.index("z_model") < order.index("a_report")
+
+    def test_pipeline_publishes_after_referenced_notebook(self, tmp_path: Path) -> None:
+        nb_id = str(uuid.uuid4())
+        _make_item(
+            tmp_path,
+            "z_notebook",
+            "Notebook",
+            logical_id=nb_id,
+            files={"notebook-content.py": "# stub\n"},
+        )
+        _make_item(
+            tmp_path,
+            "a_pipeline",
+            "DataPipeline",
+            files={"pipeline-content.json": _pipeline_content(nb_id)},
+        )
+        order = _publish_order(MagicMock(), tmp_path)
+        assert order.index("z_notebook") < order.index("a_pipeline")
+
+    def test_nested_container_notebook_ids_found(self, tmp_path: Path) -> None:
+        nb_id = str(uuid.uuid4())
+        _make_item(
+            tmp_path,
+            "z_notebook",
+            "Notebook",
+            logical_id=nb_id,
+            files={"notebook-content.py": "# stub\n"},
+        )
+        _make_item(
+            tmp_path,
+            "a_pipeline",
+            "DataPipeline",
+            files={"pipeline-content.json": _pipeline_content(nb_id, nested=True)},
+        )
+        order = _publish_order(MagicMock(), tmp_path)
+        assert order.index("z_notebook") < order.index("a_pipeline")
+
+    def test_external_notebook_id_is_ignored(self, tmp_path: Path) -> None:
+        _make_item(
+            tmp_path,
+            "pl_solo",
+            "DataPipeline",
+            files={"pipeline-content.json": _pipeline_content(str(uuid.uuid4()))},
+        )
+        assert _publish_order(MagicMock(), tmp_path) == ["pl_solo"]
+
+    def test_cycle_raises_naming_members(self, tmp_path: Path) -> None:
+        _make_item(
+            tmp_path,
+            "rpt_a",
+            "Report",
+            files={"definition.pbir": _pbir("rpt_b.Report")},
+        )
+        _make_item(
+            tmp_path,
+            "rpt_b",
+            "Report",
+            files={"definition.pbir": _pbir("rpt_a.Report")},
+        )
+        client = MagicMock()
+        client.get_paged.return_value = []
+        with pytest.raises(PublishOrderError, match=r"rpt_a\.Report.*rpt_b\.Report"):
+            publish_repo(client, "ws-x", tmp_path)
+
+    def test_scope_filter_drops_edges_to_filtered_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        _make_item(tmp_path, "sm_x", "SemanticModel", files={"definition.pbism": "{}"})
+        _make_item(
+            tmp_path,
+            "rpt_x",
+            "Report",
+            files={"definition.pbir": _pbir("sm_x.SemanticModel")},
+        )
+        order = _publish_order(MagicMock(), tmp_path, item_types_in_scope=["Report"])
+        assert order == ["rpt_x"]
+
+    def test_tier_ordering_without_edges(self, tmp_path: Path) -> None:
+        _make_item(
+            tmp_path,
+            "z_env",
+            "Environment",
+            files={"Setting/Sparkcompute.yml": "x: 1\n"},
+        )
+        _make_item(
+            tmp_path, "m_notebook", "Notebook", files={"notebook-content.py": "#\n"}
+        )
+        _make_item(tmp_path, "a_report", "Report", files={"definition.pbir": "{}"})
+        order = _publish_order(MagicMock(), tmp_path)
+        assert order == ["z_env", "m_notebook", "a_report"]
+
+    def test_order_is_deterministic(self, tmp_path: Path) -> None:
+        nb_id = str(uuid.uuid4())
+        _make_item(
+            tmp_path,
+            "nb_1",
+            "Notebook",
+            logical_id=nb_id,
+            files={"notebook-content.py": "#\n"},
+        )
+        _make_item(tmp_path, "nb_2", "Notebook", files={"notebook-content.py": "#\n"})
+        _make_item(tmp_path, "sm_1", "SemanticModel", files={"definition.pbism": "{}"})
+        _make_item(
+            tmp_path,
+            "pl_1",
+            "DataPipeline",
+            files={"pipeline-content.json": _pipeline_content(nb_id)},
+        )
+        first = _publish_order(MagicMock(), tmp_path)
+        second = _publish_order(MagicMock(), tmp_path)
+        assert first == second
+        assert first.index("nb_1") < first.index("pl_1")
