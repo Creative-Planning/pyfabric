@@ -16,6 +16,7 @@ repos:
         additional_dependencies:
           - structlog>=24.0
           - pytest>=8.0
+          - types-PyYAML>=6.0
         pass_filenames: false
         entry: mypy src/
 

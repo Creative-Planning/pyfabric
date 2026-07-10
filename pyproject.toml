@@ -75,15 +75,23 @@ testing = [
 dataagent = [
     "mcp>=1.23.0",
 ]
+# parameter.yml (find_replace) parsing for deploy.substitute_parameters.
+# PyYAML has no transitive dependencies; floor at the current release
+# (yaml.safe_load only — the historic PyYAML CVEs are full_load-only).
+deploy = [
+    "pyyaml>=6.0.2",
+]
 all = [
     "pyfabric[azure]",
     "pyfabric[data]",
     "pyfabric[lakehouse-io]",
     "pyfabric[testing]",
     "pyfabric[dataagent]",
+    "pyfabric[deploy]",
 ]
 dev = [
     "pyfabric[all]",
+    "types-PyYAML>=6.0",
     "pytest>=8.0",
     "pytest-cov>=6.0",
     "pytest-json-report>=1.5",

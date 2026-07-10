@@ -145,14 +145,43 @@ at artifacts excluded by `item_types_in_scope` — are ignored with a
 debug log. A dependency **cycle** raises `PublishOrderError` naming
 the participating artifacts.
 
+## Parameter substitution (multi-environment promotion)
+
+`substitute_parameters` applies a fabric-cicd-style `parameter.yml`
+find/replace to a copy of the repo, so one artifact bundle promotes
+across DEV / PPE / PROD workspaces with different lakehouse ids,
+connection strings, etc. Requires the `deploy` extra
+(`pip install 'pyfabric[deploy]'` — pulls in PyYAML).
+
+```yaml
+# parameter.yml
+find_replace:
+  - find_value: "11111111-1111-1111-1111-111111111111"   # DEV lakehouse id
+    replace_value:
+      DEV: "11111111-1111-1111-1111-111111111111"
+      PROD: "22222222-2222-2222-2222-222222222222"
+```
+
+```python
+from pyfabric.deploy import publish_repo, substitute_parameters
+
+staged = substitute_parameters(
+    "definitions/", "parameter.yml", environment="PROD"
+)  # returns a temp copy; pass output_dir= to control the location
+publish_repo(client, prod_ws_id, staged, item_types_in_scope=["Notebook"])
+```
+
+Guarantees: the source repo is never modified; the copy is
+byte-faithful except the replaced spans; binary files (e.g.
+`Resources/builtin/*.whl`) copy untouched; a missing `parameter.yml`
+raises instead of silently no-oping; an entry with no value for the
+requested environment raises naming the variable and the environments
+it does define.
+
 ## Not currently in scope
 
 These would be follow-ups, not v1:
 
-- **Parameter substitution.** No equivalent to the `parameter.yml`
-  find-replace flow that some external CI/CD tools provide. If you
-  need per-environment value substitution, do it in your CI pipeline
-  before calling `publish_repo`.
 - **Concurrent publish.** Items publish serially. Fast enough for
   typical workspaces; parallelize externally if needed.
 

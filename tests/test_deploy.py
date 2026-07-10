@@ -14,6 +14,7 @@ from pyfabric.deploy import (
     PublishResult,
     UnpublishResult,
     publish_repo,
+    substitute_parameters,
     unpublish_orphans,
 )
 from pyfabric.items.bundle import ArtifactBundle, save_to_disk
@@ -410,3 +411,119 @@ class TestDependencyOrder:
         second = _publish_order(MagicMock(), tmp_path)
         assert first == second
         assert first.index("nb_1") < first.index("pl_1")
+
+
+# ── substitute_parameters (issue #97) ────────────────────────────────────────
+
+
+_PARAM_YML = """\
+find_replace:
+  - find_value: "11111111-1111-1111-1111-111111111111"
+    replace_value:
+      DEV: "22222222-2222-2222-2222-222222222222"
+      PROD: "33333333-3333-3333-3333-333333333333"
+  - find_value: "<CONN_STRING>"
+    replace_value:
+      DEV: "dev-endpoint.example"
+      PROD: "prod-endpoint.example"
+"""
+
+
+def _staged_repo(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    _make_item(
+        repo,
+        "nb_x",
+        "Notebook",
+        files={
+            "notebook-content.py": (
+                "# lakehouse: 11111111-1111-1111-1111-111111111111\n"
+                "# server: <CONN_STRING>\n"
+            )
+        },
+    )
+    yml = tmp_path / "parameter.yml"
+    yml.write_text(_PARAM_YML, encoding="utf-8")
+    return repo, yml
+
+
+class TestSubstituteParameters:
+    def test_substitutes_for_selected_environment(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        out = substitute_parameters(repo, yml, environment="PROD")
+        content = (out / "nb_x.Notebook" / "notebook-content.py").read_text("utf-8")
+        assert "33333333-3333-3333-3333-333333333333" in content
+        assert "prod-endpoint.example" in content
+        assert "11111111" not in content
+
+    def test_environment_selection_differs(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        dev = substitute_parameters(repo, yml, environment="DEV")
+        content = (dev / "nb_x.Notebook" / "notebook-content.py").read_text("utf-8")
+        assert "22222222-2222-2222-2222-222222222222" in content
+
+    def test_source_repo_untouched(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        before = (repo / "nb_x.Notebook" / "notebook-content.py").read_bytes()
+        substitute_parameters(repo, yml, environment="PROD")
+        assert (repo / "nb_x.Notebook" / "notebook-content.py").read_bytes() == before
+
+    def test_output_dir_honored(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        dest = tmp_path / "staged"
+        out = substitute_parameters(repo, yml, environment="DEV", output_dir=dest)
+        assert out == dest
+        assert (dest / "nb_x.Notebook" / ".platform").exists()
+
+    def test_binary_files_copied_untouched(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        wheel = repo / "nb_x.Notebook" / "Resources" / "builtin" / "pkg.whl"
+        wheel.parent.mkdir(parents=True)
+        payload = bytes([0, 255, 254, 1]) + b"11111111-1111-1111-1111-111111111111"
+        wheel.write_bytes(payload)
+        out = substitute_parameters(repo, yml, environment="PROD")
+        copied = out / "nb_x.Notebook" / "Resources" / "builtin" / "pkg.whl"
+        assert copied.read_bytes() == payload
+
+    def test_missing_environment_names_variable_and_options(
+        self, tmp_path: Path
+    ) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        with pytest.raises(ValueError, match=r"'PPE'.*DEV, PROD"):
+            substitute_parameters(repo, yml, environment="PPE")
+
+    def test_missing_yml_raises(self, tmp_path: Path) -> None:
+        repo, _ = _staged_repo(tmp_path)
+        with pytest.raises(FileNotFoundError, match="parameter file not found"):
+            substitute_parameters(repo, tmp_path / "nope.yml", environment="DEV")
+
+    def test_malformed_yml_raises(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        yml.write_text("something_else: []\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="find_replace"):
+            substitute_parameters(repo, yml, environment="DEV")
+
+    def test_entry_without_replace_value_raises(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        yml.write_text('find_replace:\n  - find_value: "x"\n', encoding="utf-8")
+        with pytest.raises(ValueError, match="replace_value"):
+            substitute_parameters(repo, yml, environment="DEV")
+
+    def test_composes_with_publish_repo(self, tmp_path: Path) -> None:
+        repo, yml = _staged_repo(tmp_path)
+        out = substitute_parameters(repo, yml, environment="PROD")
+        client = MagicMock()
+        client.get_paged.return_value = []
+        client.post.return_value = {"id": "x"}
+        results = publish_repo(client, "ws-x", out)
+        assert [r.display_name for r in results] == ["nb_x"]
+
+    def test_import_error_names_the_extra(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        repo, yml = _staged_repo(tmp_path)
+        monkeypatch.setitem(sys.modules, "yaml", None)
+        with pytest.raises(ImportError, match=r"pyfabric\[deploy\]"):
+            substitute_parameters(repo, yml, environment="DEV")
