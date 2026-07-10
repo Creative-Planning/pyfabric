@@ -53,16 +53,19 @@ for the current shell is the tenant pyfabric talks to. Pass `tenant=` to
   `testing` extra.
 - Lakehouse GUIDs are easiest to grab from the Fabric UI (Settings →
   Identifier). Workspace GUIDs come from listing workspaces via pyfabric.
-- **Pin the `logical_id=` on every `SemanticModel(...)` / `Report(...)` you
-  regenerate from a build script.** The builders mint a fresh logicalId
-  via `<factory>` on each run; Fabric git-sync keys deployed items by
-  `.platform/logicalId`, so a rebuild lands as a **new** artifact that
-  collides with the already-deployed one (same displayName, different
-  logicalId). The sync fails, listing both the deployed item (real
-  ObjectId) and the new one (ObjectId `00000000-…`). Fix: declare
-  module-level UUID constants once, pass them via `logical_id=` on every
-  rebuild, and never let a `<factory>`-generated logicalId reach main.
-  If one slips through, restore from the first successful deploy with
+- **logicalId identity on rebuild**: Fabric git-sync keys deployed items
+  by `.platform/logicalId`; a rebuild that changes it lands as a **new**
+  artifact colliding with the deployed one (same displayName, different
+  logicalId) and the sync fails. Since pyfabric 0.1.11, `save_to_disk`
+  on every builder **reuses the logicalId of an existing `.platform`**
+  in the target directory when you don't pass `logical_id=`, so
+  re-running a build script over a committed artifact is identity-stable
+  by default. Passing an explicit `logical_id=` that differs from the
+  on-disk one still wins but logs a `logical_id_mismatch` warning —
+  that's almost always a mistake. Pinning module-level UUID constants
+  via `logical_id=` remains good practice for builds into **fresh**
+  directories (CI temp dirs, first-time builds). If a wrong id ever
+  reaches main, restore from the first successful deploy with
   `git show <sha>:path/to/.platform`.
 
 **Common operations:**

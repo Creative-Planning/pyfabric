@@ -7,7 +7,13 @@ files, and provides parsing/validation for .platform metadata files.
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import structlog
+
+log = structlog.get_logger()
 
 # ── .platform file model ─────────────────────────────────────────────────────
 
@@ -88,6 +94,52 @@ def parse_platform(content: str) -> PlatformFile:
         ),
         schema=data.get("$schema", PLATFORM_SCHEMA),
     )
+
+
+def resolve_logical_id(item_dir: Path | str, explicit: str | None) -> str:
+    """Return the logicalId to stamp into ``item_dir/.platform``.
+
+    Fabric identifies items by logicalId. Regenerating one when rebuilding
+    an existing artifact directory silently re-identifies the item, and the
+    next workspace "Update from Git" sees a delete+add pair with the same
+    display name and fails. Precedence:
+
+    - caller passed an explicit id → use it (a warning is logged when it
+      differs from an existing ``.platform``, since that is almost always
+      a mistake);
+    - an existing ``.platform`` is present → reuse its logicalId;
+    - otherwise → mint a fresh uuid4.
+    """
+    existing: str | None = None
+    platform_path = Path(item_dir) / ".platform"
+    if platform_path.exists():
+        try:
+            existing = parse_platform(
+                platform_path.read_text(encoding="utf-8")
+            ).config.logical_id
+        except (OSError, ValueError) as e:
+            log.warning(
+                "platform_unreadable — minting a fresh logicalId",
+                path=str(platform_path),
+                error=str(e),
+            )
+    if explicit is not None:
+        if existing is not None and existing != explicit:
+            log.warning(
+                "logical_id_mismatch — explicit id overrides on-disk .platform",
+                path=str(platform_path),
+                existing=existing,
+                explicit=explicit,
+            )
+        return explicit
+    if existing is not None:
+        log.info(
+            "logical_id_reused from existing .platform",
+            path=str(platform_path),
+            logical_id=existing,
+        )
+        return existing
+    return str(uuid.uuid4())
 
 
 # ── Item type registry ───────────────────────────────────────────────────────

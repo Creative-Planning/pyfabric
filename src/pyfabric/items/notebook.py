@@ -288,7 +288,9 @@ class NotebookBuilder:
 
         # Route every file through write_artifact_file so line-ending
         # rules are applied regardless of OS default.
-        write_artifact_file(artifact_dir / ".platform", bundle.platform_json())
+        write_artifact_file(
+            artifact_dir / ".platform", bundle.platform_json_for(artifact_dir)
+        )
         write_artifact_file(
             artifact_dir / "notebook-content.py", self.to_source_string()
         )
