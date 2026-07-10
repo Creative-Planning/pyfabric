@@ -37,7 +37,7 @@ HTTP client for the Fabric REST API v1 with retry, pagination, and LRO polling.
 | Function / Class | Description |
 | ----------------- | ------------- |
 | `FabricClient(credential=None, *, base_url=None, timeout=None)` | HTTP client. Accepts FabricCredential, token string, or None (creates default). Optional `base_url` and `timeout` for testing. |
-| `FabricClient.raw_request(method, url, body)` | Low-level HTTP request for custom polling patterns. Returns raw `requests.Response`. |
+| `FabricClient.raw_request(method, url, body=None, params=None)` | Low-level HTTP request for custom polling patterns. Accepts absolute URLs or API-relative paths. Returns raw `requests.Response`. |
 | `FabricClient.get(path, params)` | GET a single resource. |
 | `FabricClient.get_paged(path, params)` | GET all pages of a paginated collection. |
 | `FabricClient.post(path, body)` | POST with sync (200) and async (202/LRO) support. |
@@ -157,6 +157,24 @@ Synchronize ontology entity types to Lakehouse tables and data bindings.
 | `sync_all_entities(client, ws_id, ontology_id, livy, lh_id, *, entity_ids=None, table_map=None)` | Sync all (or specified) entities to tables and bindings in one round trip. |
 | `sync_entity_to_lakehouse(client, ws_id, ontology_id, entity_type_id, livy, lh_id, table_name)` | Sync a single entity type. |
 
+### pyfabric.client.git
+
+Workspace ↔ git synchronization, both directions.
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `GitClient(client)` | Wrapper for the workspace git-integration API. |
+| `GitClient.get_status(workspace_id)` | Return a `GitStatus` (remote/workspace heads, per-item changes). |
+| `GitClient.update_from_git(workspace_id, ...)` | Pull: apply remote git commits into the workspace ("Update from Git"). |
+| `GitClient.commit_to_git(workspace_id, ...)` | Push: commit workspace changes to the connected git branch. |
+| `GitClient.sync_workspace(workspace_id, *, direction)` | One-call sync — `"pull"`, `"push"`, or `"both"`. |
+| `GitStatus` / `ItemChange` | Status dataclasses returned by `get_status`. |
+
+Caveat: `update_from_git` never applies `.platform` description changes to
+an existing item, so a later `commit_to_git` can silently revert a
+git-side description edit — PATCH the item first, then commit (see the
+`git_commit_description_revert` claude-memory entry).
+
 ---
 
 ## pyfabric.items — Fabric Item Definitions
@@ -182,6 +200,14 @@ Validate Fabric item directory structures before git-syncing.
 | `validate_workspace(workspace_dir)` | Validate all items in a workspace directory. Returns list of results. |
 | `ValidationResult` | Contains `valid` (bool), `errors`, `warnings`, `item_type`, `item_path`. |
 | `ValidationError` | A single error or warning with `message` and optional `path`. |
+
+Beyond folder shape, `validate_item` runs type-specific checks:
+**SemanticModel** items get the full TMDL lint (`lint_semantic_model`,
+below — error-severity issues fail validation, warnings don't);
+**Report** items get base-theme wiring validation (a missing
+`themeCollection.baseTheme` or unregistered theme fails Fabric import
+silently); **DataAgent** items get the instruction-guardrail lint
+(warnings only).
 
 **Example:**
 
@@ -268,6 +294,125 @@ pl.add_notebook_activity(
 # {"value": {"value": "@pipeline().parameters.pdf_path", "type": "Expression"}, "type": "string"}
 ```
 
+### pyfabric.items.notebook
+
+Build Fabric `notebook-content.py` sources that round-trip byte-exactly
+through git-sync (cell markers, META blocks, LF, trailing newline).
+`save_to_disk` also emits `notebook-settings.json` so `Resources/` files
+survive the first sync pull.
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `NotebookBuilder(kernel="synapse_pyspark")` | Fluent builder for a notebook definition. |
+| `.attach_lakehouse(ws_id, lh_id, *, lh_name=None, default=False)` | Register a lakehouse dependency (at most one `default=True`). |
+| `.attach_environment(env_id, *, ws_id=None)` | Attach a Fabric Environment (`None` ws = same workspace). |
+| `.add_markdown(content)` | Markdown cell — every line emitted with the hash-space prefix; blank lines as hash + trailing space (bare `#` lines get stripped by Fabric and flap the file). |
+| `.add_python(code)` | Python code cell. |
+| `.add_sparksql(sql)` | Spark SQL cell — raw SQL body, META block `{"language": "sparksql"}` (no `language_group`; byte-verified against a Fabric-emitted fixture). |
+| `.add_parameters_cell(code)` | Python cell with the `# PARAMETERS CELL` marker (Jobs API injection target). |
+| `.pip_install_from_resources(wheel_name)` | Convenience `%pip install "builtin/<wheel>" --quiet` cell. |
+| `.to_source_string()` / `.to_bundle(display_name, *, logical_id=None)` / `.save_to_disk(output_dir, *, display_name, logical_id=None)` | Materialize the source / an `ArtifactBundle` / the `.Notebook` folder. |
+
+### pyfabric.items.semantic_model
+
+Build TMDL semantic models (`*.SemanticModel` folders). Descriptions are
+**required by default** on visible tables/columns/measures
+(`strict_descriptions=False` to opt out with a logged warning); measures
+must not collide (case-insensitively) with column names on the same table.
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `SemanticModel(name, sources, tables, relationships=[], ...)` | The model. `validate()` returns error strings; `save_to_disk(output_dir)` validates and emits the folder. |
+| `LakehouseSource(name, workspace_id, lakehouse_id)` | Import via the shared `Lakehouse.Contents` navigation. **dbo-schema tables only** — a non-dbo schema is a validation error (the connector returns an empty navigation table for schema-enabled lakehouses; use `SqlEndpointSource`). |
+| `SqlEndpointSource(name, server, database)` | Import via the SQL analytics endpoint (`Sql.Database` navigation with `Schema=`/`Item=` keys) — works for all schemas incl. schema-enabled lakehouses. `database` is the lakehouse display name. |
+| `SqlDatabaseSource(server, endpoint_id, name="DatabaseQuery")` | DirectLake `entity` partitions over the SQL endpoint. Requires `compatibility_level=1604+`. |
+| `SqlQuerySource(name, server, database)` | DirectQuery — each table sets `Table.query` (native T-SQL, inlined per partition). |
+| `Table(name, source, columns, measures=[], schema="dbo", query=None, ...)` | One table; partition shape follows the source kind. |
+| `Column` / `Measure` / `Relationship` | Model objects. Measure names: Title Case with `%`/`#`; column names: snake_case (collision rule above). |
+
+`save_to_disk` reuses an existing `.platform` logicalId in the target
+directory when `logical_id` isn't pinned, so rebuild scripts are
+identity-stable (same for `Report` and every bundle-based builder).
+
+### pyfabric.items.report
+
+Build PBIR-format reports (`*.Report` folders). A non-empty report
+description is required by default (surfaced via the API; deliberately
+not written into `.platform`, which Fabric would strip).
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `Report(name, semantic_model_path, pages, description, theme=None)` | The report; `semantic_model_path` is the relative `../sm_x.SemanticModel` byPath reference. |
+| `Page(name, display_name, visuals=[], page_refresh=None)` | One page; `page_refresh="PT5M"` enables automatic page refresh. |
+| `Card` / `MultiCard` | Modern `cardVisual` (single metric / multi-metric strip). |
+| `ColumnChart` / `ClusteredColumnChart` | Column chart visuals. |
+| `Table` / `Slicer` | Tabular visual (with `TableOrderBy`) / slicer (fields may be a drill hierarchy). |
+| `Column` / `Measure` / `Aggregate` | Field references for visuals (support `display_name` and `format_string`). |
+| `Theme` / `ThemeColor` | Base-theme definition; the emitted theme wiring passes `validate_item`'s theme check. |
+
+### pyfabric.items.environment
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `EnvironmentBuilder()` | Fluent builder — `.runtime("1.3")`, `.compute(...)`, `.pip(*pins)` — emitting `Setting/Sparkcompute.yml` (+ `environment.yml` when pins exist). Don't list `pyfabric`/`structlog` in `.pip()`; ship project wheels, not dev tooling. |
+| `publish_environment(client, ws_id, env_id)` / `get_environment_status(...)` / `wait_for_published(...)` | REST publish lifecycle (publishing takes minutes). |
+
+### pyfabric.items.mirrored_database
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `MirroredDatabaseBuilder(default_schema="dbo")` | Emit a startable Open Mirroring artifact (`mirroring.json` + `.platform`). |
+| `create_mirrored_database(...)` / `start_mirroring(...)` / `stop_mirroring(...)` / `get_mirroring_status(...)` / `get_tables_mirroring_status(...)` / `wait_for_running(...)` | REST lifecycle helpers. |
+
+The landing-zone data plane lives in `pyfabric.data.open_mirror`
+(`OpenMirrorClient` — see the `open_mirror_landing_zone` claude-memory
+entry for the protocol).
+
+### pyfabric.items.jobs
+
+Run and schedule item jobs.
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `run_on_demand(client, ws_id, item_id, job_type, ...)` / `run_notebook(client, ws_id, notebook_id, parameters=None)` | Trigger a job (notebook parameters are injected into the parameters cell). |
+| `list_schedules` / `get_schedule` / `create_schedule` / `update_schedule` / `delete_schedule` | Schedule CRUD per item + job type (jobType aliases normalized). |
+| `list_job_instances(client, ws_id, item_id)` | Recent job runs with status. |
+
+### pyfabric.items.validate_tmdl
+
+TMDL lint for SemanticModel folders — regex-based, no full TMDL parser.
+Run automatically by `validate_item` for SemanticModel items.
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `lint_semantic_model(item_dir)` | Run every rule; returns `list[TmdlIssue]`. |
+| `check_name_collisions(item_dir)` | Measure vs column name collision (case-insensitive, same table) — error. |
+| `check_compatibility_level(item_dir)` | Error when a `directLake` partition exists below level 1604; warning when missing or below the 1567 PBIP baseline. |
+| `check_orphan_columns(item_dir)` | Relationship endpoints / measure-DAX refs naming a declared table but an undeclared column — warning (calculated columns are invisible to the lint). |
+| `check_dax_paren_balance(item_dir)` | Unbalanced parens per measure (DAX strings/comments stripped first) — error. |
+| `check_lineage_tag_uniqueness(item_dir)` | Duplicate `lineageTag` values across the definition — error. |
+| `TmdlIssue` | `path`, `message`, `severity` (`"error"` / `"warning"`). |
+
+### pyfabric.items.data_agent
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `lint_data_agent(item_dir)` | Instruction-guardrail lint for a `*.DataAgent` folder (warnings via `validate_item`). |
+| `lint_instruction_text(text)` / `validate_instructions(text, *, strict=True)` | Lint raw aiInstructions text. |
+
+---
+
+## pyfabric.deploy — Repo-to-Workspace Deployment
+
+Full guide: [docs/deploy.md](deploy.md).
+
+| Function / Class | Description |
+| ----------------- | ------------- |
+| `publish_repo(client, workspace_id, repo_dir, *, item_types_in_scope=None)` | Create/update every artifact folder in **dependency order** (Report → SemanticModel via `definition.pbir`, DataPipeline → Notebook via logicalId, type tiers otherwise). Cycles raise `PublishOrderError`. |
+| `unpublish_orphans(client, workspace_id, repo_dir, *, item_types_in_scope=None, dry_run=False)` | Delete workspace items with no matching folder. Always pass `item_types_in_scope`. |
+| `substitute_parameters(repo_dir, parameter_yml, *, environment, output_dir=None)` | Apply a fabric-cicd-style `find_replace` file for one environment; returns a byte-faithful staged copy for `publish_repo`. Requires the `deploy` extra (PyYAML). |
+| `PublishResult` / `UnpublishResult` / `PublishOrderError` | Result / error types. |
+
 ---
 
 ## pyfabric.data — Data Access
@@ -281,8 +426,13 @@ OneLake DFS (Data Lake Storage Gen2) helpers.
 | `abfss_url(ws_id, item_id, path)` | Build an `abfss://` URL for Delta lake access. |
 | `list_paths(token, ws_id, item_id, path)` | List paths using the DFS filesystem API. |
 | `list_files(token, ws_id, item_id, path)` | List non-directory entries, optionally filtered by suffix. |
+| `walk(token, ws_id, item_id, path, *, suffix=None)` | Recursively yield file entries (manual descent — DFS's recursive flag goes shallow on deep subdirectories). |
 | `read_file(token, ws_id, item_id, path)` | Download a file as bytes. |
+| `download_with_cache(token, ws_id, item_id, rel_path, cache_dir, ...)` | Download with local cache (size/md5 validation). |
 | `upload_file(token, ws_id, item_id, path, data)` | Upload bytes using the 3-step DFS protocol. |
+| `create_directory(token, ws_id, item_id, path)` | Create a directory (idempotent). Required before `rename_path` into a new directory — the DFS protocol 404s a rename whose destination parent doesn't exist. |
+| `rename_path(token, ws_id, item_id, src_path, dst_path)` | Metadata-only move via `x-ms-rename-source`. |
+| `delete_path(token, ws_id, item_id, path, *, recursive=False)` | Delete a file or directory (`recursive=True` for non-empty dirs). |
 | `read_parquet_df(token, ws_id, item_id, path)` | Download Parquet files and return a DataFrame. |
 
 ### pyfabric.data.sql
@@ -301,10 +451,16 @@ SQL analytics endpoint client for Fabric lakehouses and warehouses.
 
 ### pyfabric.data.lakehouse
 
-High-level lakehouse table operations with SQL-first reads and DFS Delta writes.
+High-level lakehouse table operations: SQL-first reads, DFS Delta writes,
+and programmatic DDL (schema/table management as OneLake directory ops).
 
 | Function / Class | Description |
 | ----------------- | ------------- |
+| `delete_table(credential, ws_id, lh_id, table, schema="dbo")` | Drop a Delta table (recursive directory delete). |
+| `rename_table(credential, ws_id, lh_id, src, dst, schema="dbo")` | Metadata-only table rename within a schema. |
+| `rename_schema(credential, ws_id, lh_id, src_schema, dst_schema)` | Move every table to the destination schema (created first), then remove the now-empty source directory (left in place with a warning if anything unexpected remains). Partial failure raises `LakehouseRenameSchemaError` with `moved`/`failed` so callers can retry only the failures. |
+| `drop_schema(credential, ws_id, lh_id, schema)` | Remove a schema directory and everything under it. |
+| `list_schemas(credential, ws_id, lh_id)` / `list_tables(credential, ws_id, lh_id, schema=None)` | Enumerate schemas / tables. |
 | `write_table(credential, ws_id, lh_id, table_name, data)` | Write a DataFrame as a Delta table. |
 | `read_table(credential, ws_id, lh_id, table_name)` | Read a table (SQL first, DFS fallback). |
 | `WriteResult` | Result dataclass with table_path, row_count, mode, dry_run. |
