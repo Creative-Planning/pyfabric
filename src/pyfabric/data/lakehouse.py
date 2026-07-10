@@ -516,6 +516,15 @@ def rename_schema(
         table_count=len(tables),
     )
 
+    # The DFS rename protocol requires the destination parent directory
+    # to exist — otherwise every table move 404s with "The parent
+    # directory of the destination path does not exist". Caught live by
+    # the e2e suite (#52); the mocked seam never modeled it.
+    if tables:
+        onelake.create_directory(
+            credential.storage_token, ws_id, lh_id, f"Tables/{dst_schema}"
+        )
+
     moved: list[str] = []
     failed: dict[str, str] = {}
     for t in tables:

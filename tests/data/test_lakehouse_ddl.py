@@ -103,6 +103,7 @@ class TestRenameSchema:
         with (
             patch("pyfabric.data.lakehouse.onelake.list_paths") as mock_ls,
             patch("pyfabric.data.lakehouse.onelake.rename_path") as mock_ren,
+            patch("pyfabric.data.lakehouse.onelake.create_directory") as mock_mkdir,
         ):
             mock_ls.return_value = [
                 _path_entry(f"{LH}/Tables/old/a", is_dir=True),
@@ -112,6 +113,11 @@ class TestRenameSchema:
             moved = rename_schema(fake_credential, WS, LH, "old", "new")
         assert sorted(moved) == ["a", "b", "c"]
         assert mock_ren.call_count == 3
+        # The destination schema directory must be created BEFORE any
+        # rename: the real DFS protocol 404s a rename whose destination
+        # parent doesn't exist (caught live by the e2e suite, #52).
+        mock_mkdir.assert_called_once()
+        assert mock_mkdir.call_args.args[3] == "Tables/new"
         # Each rename sends src=Tables/old/<t>, dst=Tables/new/<t>
         src_dst_pairs = {
             (call.args[3], call.args[4]) for call in mock_ren.call_args_list
@@ -126,6 +132,7 @@ class TestRenameSchema:
         with (
             patch("pyfabric.data.lakehouse.onelake.list_paths") as mock_ls,
             patch("pyfabric.data.lakehouse.onelake.rename_path") as mock_ren,
+            patch("pyfabric.data.lakehouse.onelake.create_directory"),
         ):
             mock_ls.return_value = [
                 _path_entry(f"{LH}/Tables/old/a", is_dir=True),
@@ -149,11 +156,14 @@ class TestRenameSchema:
         with (
             patch("pyfabric.data.lakehouse.onelake.list_paths") as mock_ls,
             patch("pyfabric.data.lakehouse.onelake.rename_path") as mock_ren,
+            patch("pyfabric.data.lakehouse.onelake.create_directory") as mock_mkdir,
         ):
             mock_ls.return_value = []
             moved = rename_schema(fake_credential, WS, LH, "empty", "new")
         assert moved == []
         mock_ren.assert_not_called()
+        # No tables to move -> don't create an empty destination schema.
+        mock_mkdir.assert_not_called()
 
     def test_refuses_when_src_equals_dst(self, fake_credential):
         with (
