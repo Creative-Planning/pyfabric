@@ -392,3 +392,37 @@ class TestAttachEnvironment:
         src = nb.to_source_string()
         assert '"environmentId": "env-new"' in src
         assert "env-old" not in src
+
+
+# ── Spark SQL cells (issue #55) ──────────────────────────────────────────────
+
+
+class TestSparkSqlCells:
+    def test_sparksql_round_trip_byte_identical_to_fabric_fixture(self):
+        """The fixture was captured from a real Fabric notebook: created
+        via an ipynb-format definition with a Spark SQL cell, fetched
+        back in git format. The builder must reproduce it byte-for-byte
+        or the artifact flaps on every sync."""
+        nb = NotebookBuilder().add_sparksql("SELECT 1 AS probe")
+        assert nb.to_source_string().encode("utf-8") == _fixture_bytes("nb_sparksql")
+
+    def test_sparksql_meta_block_has_no_language_group(self):
+        src = NotebookBuilder().add_sparksql("SELECT 1").to_source_string()
+        assert '# META   "language": "sparksql"' in src
+        assert "language_group" not in src.split("# CELL")[1]
+
+    def test_python_cells_keep_language_group(self):
+        src = NotebookBuilder().add_python("x = 1").to_source_string()
+        assert '# META   "language": "python",' in src
+        assert '# META   "language_group": "synapse_pyspark"' in src
+
+    def test_add_sparksql_is_chainable(self):
+        nb = (
+            NotebookBuilder()
+            .add_markdown("# Report")
+            .add_sparksql("SELECT 1 AS probe")
+            .add_python("x = 1")
+        )
+        src = nb.to_source_string()
+        assert src.count("# CELL ********************") == 2
+        assert "# MARKDOWN ********************" in src
