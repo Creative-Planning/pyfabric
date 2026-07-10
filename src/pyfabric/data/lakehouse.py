@@ -516,6 +516,15 @@ def rename_schema(
         table_count=len(tables),
     )
 
+    # The DFS rename protocol requires the destination parent directory
+    # to exist — otherwise every table move 404s with "The parent
+    # directory of the destination path does not exist". Caught live by
+    # the e2e suite (#52); the mocked seam never modeled it.
+    if tables:
+        onelake.create_directory(
+            credential.storage_token, ws_id, lh_id, f"Tables/{dst_schema}"
+        )
+
     moved: list[str] = []
     failed: dict[str, str] = {}
     for t in tables:
@@ -540,6 +549,23 @@ def rename_schema(
 
     if failed:
         raise LakehouseRenameSchemaError(moved, failed)
+
+    # A rename must not leave the (now empty) source schema behind —
+    # list_schemas would keep showing it forever. Non-recursive delete
+    # on purpose: if anything unexpected still lives under
+    # Tables/{src_schema}/, leave the directory in place and warn rather
+    # than risk deleting data. (Caught live by the e2e suite, #52.)
+    if tables:
+        try:
+            onelake.delete_path(
+                credential.storage_token, ws_id, lh_id, f"Tables/{src_schema}"
+            )
+        except Exception as e:
+            log.warning(
+                "rename_schema_source_dir_left_in_place",
+                src_schema=src_schema,
+                error=str(e),
+            )
 
     log.info(
         "rename_schema_complete",

@@ -448,6 +448,19 @@ def delete_path(
     return True
 
 
+def create_directory(token: str, ws_id: str, item_id: str, path: str) -> None:
+    """Create a directory at ``{item_id}/{path}`` (parents included).
+
+    Idempotent — the ADLS Gen2 DFS API succeeds if the directory already
+    exists. Needed before :func:`rename_path` into a new directory: the
+    protocol rejects a rename whose destination parent doesn't exist with
+    ``404 The parent directory of the destination path does not exist``.
+    """
+    url = _dfs_url(ws_id, item_id, path)
+    r = _get_session().put(url, headers=_hdrs(token), params={"resource": "directory"})
+    r.raise_for_status()
+
+
 def rename_path(
     token: str,
     ws_id: str,
@@ -459,7 +472,9 @@ def rename_path(
 
     Metadata-only move — no data rewrite. The destination is addressed by
     PUT on its URL with the ``x-ms-rename-source`` header pointing at the
-    source, per the ADLS Gen2 DFS protocol.
+    source, per the ADLS Gen2 DFS protocol. The destination's **parent
+    directory must already exist** — create it first with
+    :func:`create_directory` when moving into a new directory.
     """
     url = _dfs_url(ws_id, item_id, dst_path)
     rename_source = f"/{ws_id}/{item_id}/{src_path}"
