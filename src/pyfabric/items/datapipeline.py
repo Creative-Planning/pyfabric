@@ -311,7 +311,9 @@ class DataPipelineBuilder:
         )
         artifact_dir = Path(output_dir) / bundle.dir_name
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        write_artifact_file(artifact_dir / ".platform", bundle.platform_json())
+        write_artifact_file(
+            artifact_dir / ".platform", bundle.platform_json_for(artifact_dir)
+        )
         write_artifact_file(
             artifact_dir / "pipeline-content.json", self.to_pipeline_content()
         )

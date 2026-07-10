@@ -8,6 +8,7 @@ import pytest
 from pyfabric.items.types import (
     ITEM_TYPES,
     parse_platform,
+    resolve_logical_id,
 )
 
 
@@ -164,3 +165,55 @@ class TestPlatformFile:
         }
         pf = parse_platform(json.dumps(data))
         assert pf.expected_dir_name == "nb_test.Notebook"
+
+
+class TestResolveLogicalId:
+    """resolve_logical_id: the identity-stability contract for rebuilds."""
+
+    @staticmethod
+    def _write_platform(item_dir, logical_id):
+        item_dir.mkdir(parents=True, exist_ok=True)
+        (item_dir / ".platform").write_text(
+            json.dumps(
+                {
+                    "metadata": {"type": "Notebook", "displayName": "nb"},
+                    "config": {"version": "2.0", "logicalId": logical_id},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_reuses_existing_platform_id_when_not_pinned(self, tmp_path):
+        existing = str(uuid.uuid4())
+        self._write_platform(tmp_path / "nb.Notebook", existing)
+        assert resolve_logical_id(tmp_path / "nb.Notebook", None) == existing
+
+    def test_mints_fresh_uuid_for_new_directory(self, tmp_path):
+        resolved = resolve_logical_id(tmp_path / "nb.Notebook", None)
+        uuid.UUID(resolved)  # raises if not a valid uuid
+
+    def test_explicit_id_wins_over_existing(self, tmp_path):
+        self._write_platform(tmp_path / "nb.Notebook", str(uuid.uuid4()))
+        explicit = str(uuid.uuid4())
+        assert resolve_logical_id(tmp_path / "nb.Notebook", explicit) == explicit
+
+    def test_explicit_id_used_for_new_directory(self, tmp_path):
+        explicit = str(uuid.uuid4())
+        assert resolve_logical_id(tmp_path / "nb.Notebook", explicit) == explicit
+
+    def test_corrupt_platform_falls_back_to_fresh_uuid(self, tmp_path):
+        item_dir = tmp_path / "nb.Notebook"
+        item_dir.mkdir(parents=True)
+        (item_dir / ".platform").write_text("{not json", encoding="utf-8")
+        resolved = resolve_logical_id(item_dir, None)
+        uuid.UUID(resolved)
+
+    def test_platform_missing_logical_id_falls_back(self, tmp_path):
+        item_dir = tmp_path / "nb.Notebook"
+        item_dir.mkdir(parents=True)
+        (item_dir / ".platform").write_text(
+            json.dumps({"metadata": {"type": "Notebook", "displayName": "nb"}}),
+            encoding="utf-8",
+        )
+        resolved = resolve_logical_id(item_dir, None)
+        uuid.UUID(resolved)

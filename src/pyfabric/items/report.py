@@ -89,6 +89,7 @@ from typing import Any, Literal
 import structlog
 
 from pyfabric.items.normalize import write_artifact_file
+from pyfabric.items.types import resolve_logical_id
 
 log = structlog.get_logger()
 
@@ -481,7 +482,11 @@ class Report:
     description: str = ""
     theme: Theme | None = None
     strict_descriptions: bool = True
-    logical_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # None = "not pinned by the caller": save_to_disk reuses the logicalId
+    # of an existing .platform in the target directory, so rebuild scripts
+    # are idempotent on item identity. A fresh uuid4 is minted only when
+    # neither an explicit id nor an existing .platform is available.
+    logical_id: str | None = None
 
     def validate(self) -> list[str]:
         """Return a list of human-readable error messages.
@@ -521,6 +526,7 @@ class Report:
 
         output_dir = Path(output_dir)
         item_dir = output_dir / f"{self.name}.Report"
+        self.logical_id = resolve_logical_id(item_dir, self.logical_id)
 
         # Stamp deterministic ids on any unnamed pages/visuals before emit.
         for page_index, page in enumerate(self.pages):
@@ -576,6 +582,8 @@ class Report:
     def _emit_platform(self) -> str:
         # NOTE: no ``description`` key — Fabric strips report descriptions
         # from .platform on sync, so emitting one causes a permanent flap.
+        if self.logical_id is None:
+            self.logical_id = str(uuid.uuid4())
         return json.dumps(
             {
                 "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
