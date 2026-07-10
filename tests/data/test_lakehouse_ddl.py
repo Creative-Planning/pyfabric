@@ -104,6 +104,7 @@ class TestRenameSchema:
             patch("pyfabric.data.lakehouse.onelake.list_paths") as mock_ls,
             patch("pyfabric.data.lakehouse.onelake.rename_path") as mock_ren,
             patch("pyfabric.data.lakehouse.onelake.create_directory") as mock_mkdir,
+            patch("pyfabric.data.lakehouse.onelake.delete_path") as mock_del,
         ):
             mock_ls.return_value = [
                 _path_entry(f"{LH}/Tables/old/a", is_dir=True),
@@ -127,12 +128,32 @@ class TestRenameSchema:
             ("Tables/old/b", "Tables/new/b"),
             ("Tables/old/c", "Tables/new/c"),
         }
+        # The now-empty source schema directory is removed (non-recursive)
+        # so list_schemas stops showing it — also caught live (#52).
+        mock_del.assert_called_once()
+        assert mock_del.call_args.args[3] == "Tables/old"
+        assert mock_del.call_args.kwargs.get("recursive", False) is False
+
+    def test_source_dir_left_in_place_when_not_empty(self, fake_credential):
+        # Non-recursive delete of a non-empty source dir fails server-side;
+        # rename_schema warns and still returns the moved tables.
+        with (
+            patch("pyfabric.data.lakehouse.onelake.list_paths") as mock_ls,
+            patch("pyfabric.data.lakehouse.onelake.rename_path"),
+            patch("pyfabric.data.lakehouse.onelake.create_directory"),
+            patch("pyfabric.data.lakehouse.onelake.delete_path") as mock_del,
+        ):
+            mock_ls.return_value = [_path_entry(f"{LH}/Tables/old/a", is_dir=True)]
+            mock_del.side_effect = RuntimeError("409 DirectoryNotEmpty")
+            moved = rename_schema(fake_credential, WS, LH, "old", "new")
+        assert moved == ["a"]
 
     def test_partial_failure_raises_structured_exception(self, fake_credential):
         with (
             patch("pyfabric.data.lakehouse.onelake.list_paths") as mock_ls,
             patch("pyfabric.data.lakehouse.onelake.rename_path") as mock_ren,
             patch("pyfabric.data.lakehouse.onelake.create_directory"),
+            patch("pyfabric.data.lakehouse.onelake.delete_path") as mock_del,
         ):
             mock_ls.return_value = [
                 _path_entry(f"{LH}/Tables/old/a", is_dir=True),
@@ -151,6 +172,9 @@ class TestRenameSchema:
         assert "409 conflict" in err.failed["b"]
         # Every table was attempted (no early abort).
         assert mock_ren.call_count == 3
+        # The source dir must NOT be removed on partial failure — the
+        # failed tables still live there for the caller's retry.
+        mock_del.assert_not_called()
 
     def test_no_tables_in_source_schema_returns_empty(self, fake_credential):
         with (

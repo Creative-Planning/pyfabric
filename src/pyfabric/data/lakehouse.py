@@ -550,6 +550,23 @@ def rename_schema(
     if failed:
         raise LakehouseRenameSchemaError(moved, failed)
 
+    # A rename must not leave the (now empty) source schema behind —
+    # list_schemas would keep showing it forever. Non-recursive delete
+    # on purpose: if anything unexpected still lives under
+    # Tables/{src_schema}/, leave the directory in place and warn rather
+    # than risk deleting data. (Caught live by the e2e suite, #52.)
+    if tables:
+        try:
+            onelake.delete_path(
+                credential.storage_token, ws_id, lh_id, f"Tables/{src_schema}"
+            )
+        except Exception as e:
+            log.warning(
+                "rename_schema_source_dir_left_in_place",
+                src_schema=src_schema,
+                error=str(e),
+            )
+
     log.info(
         "rename_schema_complete",
         src_schema=src_schema,
