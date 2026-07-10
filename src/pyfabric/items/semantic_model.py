@@ -236,8 +236,47 @@ class SqlQuerySource:
             )
 
 
+@dataclass(frozen=True)
+class SqlEndpointSource:
+    """A lakehouse SQL analytics endpoint read via **import**-mode partitions.
+
+    The ``Lakehouse.Contents`` connector behind :class:`LakehouseSource`
+    returns an **empty navigation table** for schema-enabled lakehouses
+    (tables under ``Tables/<schema>/``), so every refresh fails with
+    ``Expression.Error: The key didn't match any rows in the table``.
+    This source navigates the SQL analytics endpoint instead, which
+    serves all schemas. Emits one shared expression::
+
+        expression <name> =
+                let
+                    Source = Sql.Database("<server>", "<database>")
+                in
+                    Source
+
+    and each table sourced from it emits an import M partition
+    navigating ``Source{[Schema="<schema>", Item="<table>"]}[Data]``.
+
+    ``server`` is the endpoint host
+    (``*.datawarehouse.fabric.microsoft.com`` — resolvable via
+    ``GET /workspaces/{ws}/lakehouses/{id}`` →
+    ``properties.sqlEndpointProperties.connectionString``);
+    ``database`` is the lakehouse display name.
+    """
+
+    name: str
+    server: str
+    database: str
+    description: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.isidentifier():
+            raise ValueError(
+                f"SqlEndpointSource.name must be a valid M identifier, got {self.name!r}"
+            )
+
+
 # Anything a Table can read from.
-Source = LakehouseSource | SqlDatabaseSource | SqlQuerySource
+Source = LakehouseSource | SqlDatabaseSource | SqlQuerySource | SqlEndpointSource
 
 
 # ── Columns ─────────────────────────────────────────────────────────────────
@@ -517,6 +556,19 @@ class SemanticModel:
                     f"SqlQuerySource source (got {type(t.source).__name__})"
                 )
 
+        # Lakehouse.Contents cannot address non-dbo schemas: against a
+        # schema-enabled lakehouse it returns an empty navigation table,
+        # so every refresh of such a model fails. Refuse to emit one.
+        for t in self.tables:
+            if isinstance(t.source, LakehouseSource) and t.schema != "dbo":
+                errors.append(
+                    f"{t.name}: schema {t.schema!r} is not addressable via "
+                    f"LakehouseSource — Lakehouse.Contents returns an empty "
+                    f"navigation table for schema-enabled lakehouses, so the "
+                    f"model can never refresh. Use SqlEndpointSource (SQL "
+                    f"analytics endpoint) for this table's source instead."
+                )
+
         if self.compatibility_level < 1604 and any(
             isinstance(s, SqlDatabaseSource) for s in self.sources
         ):
@@ -663,7 +715,8 @@ class SemanticModel:
     def _emit_model(self) -> str:
         # PBI_QueryOrder lists every M query in the model: the parameter +
         # navigation expressions a source contributes (LakehouseSource
-        # brings three, SqlDatabaseSource one, SqlQuerySource none — its
+        # brings three, SqlDatabaseSource/SqlEndpointSource one each,
+        # SqlQuerySource none — its
         # Sql.Database call is inlined per partition) and then the tables.
         lakehouse_sources = [s for s in self.sources if isinstance(s, LakehouseSource)]
         order = (
@@ -671,6 +724,7 @@ class SemanticModel:
             + [f"{s.name}LakehouseId" for s in lakehouse_sources]
             + [s.name for s in lakehouse_sources]
             + [s.name for s in self.sources if isinstance(s, SqlDatabaseSource)]
+            + [s.name for s in self.sources if isinstance(s, SqlEndpointSource)]
             + [t.name for t in self.tables]
         )
         # PBI_QueryOrder is a JSON array embedded as a TMDL annotation value.
@@ -720,6 +774,8 @@ class SemanticModel:
                 chunks.append(_emit_lakehouse_expression(s, _lineage(s.name)))
             elif isinstance(s, SqlDatabaseSource):
                 chunks.append(_emit_sql_database_expression(s, _lineage(s.name)))
+            elif isinstance(s, SqlEndpointSource):
+                chunks.append(_emit_sql_endpoint_expression(s, _lineage(s.name)))
             # SqlQuerySource contributes no expression — its Sql.Database
             # call is inlined in each table partition.
         return "\n\n".join(chunks)
@@ -870,6 +926,22 @@ def _emit_sql_database_expression(s: SqlDatabaseSource, lineage_tag: str) -> str
     )
 
 
+def _emit_sql_endpoint_expression(s: SqlEndpointSource, lineage_tag: str) -> str:
+    """The shared ``Sql.Database`` navigation expression for import partitions."""
+    return (
+        f"expression {s.name} =\n"
+        "\t\tlet\n"
+        f'\t\t    Source = Sql.Database("{s.server}", "{s.database}")\n'
+        "\t\tin\n"
+        "\t\t    Source\n"
+        f"\tlineageTag: {lineage_tag}\n"
+        "\n"
+        "\tannotation PBI_NavigationStepName = Navigation\n"
+        "\n"
+        "\tannotation PBI_ResultType = Database"
+    )
+
+
 def _emit_partition(t: Table) -> str:
     """The ``partition`` block, shaped by the table's source kind."""
     if isinstance(t.source, SqlDatabaseSource):
@@ -901,6 +973,22 @@ def _emit_partition(t: Table) -> str:
             f'"{t.source.database}", [Query="{escaped_query}"])\n'
             "\t\t\t\tin\n"
             "\t\t\t\t    Source"
+        )
+    if isinstance(t.source, SqlEndpointSource):
+        # Import partition over the SQL analytics endpoint — note the
+        # `Schema=`/`Item=` navigation key (NOT `Id=`): this is the shape
+        # the Sql.Database navigation table matches, and it works for
+        # schema-enabled lakehouses where Lakehouse.Contents returns
+        # nothing.
+        return (
+            f"\tpartition {t.name} = m\n"
+            "\t\tmode: import\n"
+            "\t\tsource =\n"
+            "\t\t\t\tlet\n"
+            f"\t\t\t\t    Source = {t.source.name},\n"
+            f'\t\t\t\t    tbl = Source{{[Schema="{t.schema}", Item="{t.name}"]}}[Data]\n'
+            "\t\t\t\tin\n"
+            "\t\t\t\t    tbl"
         )
     return (
         f"\tpartition {t.name} = m\n"
