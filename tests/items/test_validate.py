@@ -90,6 +90,29 @@ class TestValidateItem:
         result = validate_item(item_dir)
         assert result.valid
 
+    def test_semantic_model_tmdl_lint_routes_severities(self, tmp_path: Path):
+        # Error-severity lint issue (unbalanced DAX parens) fails validation;
+        # warning-severity issue (orphan column ref) lands in warnings.
+        item_dir = _create_item(
+            tmp_path,
+            "sm_lint",
+            "SemanticModel",
+            {
+                "definition.pbism": '{"version": "1.0"}',
+                "definition/database.tmdl": "database\n\tcompatibilityLevel: 1567",
+                "definition/tables/f.tmdl": (
+                    "table f\n"
+                    "\tmeasure 'Broken' = SUM(f[x]\n"
+                    "\tmeasure 'Orphan' = SUM(f[ghost])\n"
+                    "\tcolumn x\n"
+                ),
+            },
+        )
+        result = validate_item(item_dir)
+        assert not result.valid
+        assert any("unbalanced" in e.message for e in result.errors)
+        assert any("[ghost]" in w.message for w in result.warnings)
+
     def test_semantic_model_no_content_invalid(self, tmp_path: Path):
         item_dir = tmp_path / "sm_empty.SemanticModel"
         item_dir.mkdir()
