@@ -17,6 +17,7 @@ modification.
    # my_pkg/build.py
    from pyfabric.data.sqlconn import SqlConn
 
+
    def build_silver(con: SqlConn, *, bronze_schema: str, silver_schema: str) -> None:
        con.execute(f"""
            CREATE OR REPLACE TABLE {silver_schema}.dim_customer AS
@@ -30,9 +31,12 @@ modification.
    import duckdb
    from my_pkg.build import build_silver
 
+
    def test_build_silver():
        con = duckdb.connect(":memory:")
-       con.execute("CREATE SCHEMA bronze; CREATE TABLE bronze.customer (id INT, name TEXT)")
+       con.execute(
+           "CREATE SCHEMA bronze; CREATE TABLE bronze.customer (id INT, name TEXT)"
+       )
        con.execute("INSERT INTO bronze.customer VALUES (1, 'Alice')")
        build_silver(con, bronze_schema="bronze", silver_schema="silver")
        result = con.execute("SELECT name FROM silver.dim_customer").fetchone()
@@ -47,10 +51,12 @@ modification.
 
    # Cell 2 — wrap Spark as SqlConn
    from pyfabric.data.sqlconn import SparkSqlConn
+
    con = SparkSqlConn(spark)
 
    # Cell 3 — run same build functions
    from my_pkg.build import build_silver
+
    build_silver(con, bronze_schema="lh_bronze.dbo", silver_schema="lh_silver.dbo")
    ```
 

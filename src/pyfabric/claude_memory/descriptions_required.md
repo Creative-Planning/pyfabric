@@ -26,7 +26,8 @@ prevent that drift.
 
    ```python
    Column(
-       "report_year", "int64",
+       "report_year",
+       "int64",
        format_string="0",
        description="Year of the report's fiscal-period folder.",
    )

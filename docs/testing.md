@@ -48,18 +48,21 @@ Place Delta tables in the lakehouse directory structure that Fabric expects:
 import pyarrow as pa
 from deltalake import write_deltalake
 
+
 def test_with_delta_table(fabric_spark, lakehouse_root):
     # Create a lakehouse with a Delta table
     table_dir = lakehouse_root / "lh_test" / "Tables" / "products"
     table_dir.mkdir(parents=True)
-    
-    table = pa.table({
-        "product_id": pa.array([1, 2, 3]),
-        "name": pa.array(["Widget A", "Widget B", "Widget C"]),
-        "price": pa.array([9.99, 19.99, 29.99]),
-    })
+
+    table = pa.table(
+        {
+            "product_id": pa.array([1, 2, 3]),
+            "name": pa.array(["Widget A", "Widget B", "Widget C"]),
+            "price": pa.array([9.99, 19.99, 29.99]),
+        }
+    )
     write_deltalake(str(table_dir), table)
-    
+
     # Query using Fabric-style table references
     df = fabric_spark.sql("SELECT * FROM lh_test.products WHERE price > 15")
     assert df.count() == 2
@@ -133,6 +136,7 @@ def test_notebook_run(mock_notebookutils):
 ```python
 import pytest
 
+
 def test_credentials_raise(mock_notebookutils):
     with pytest.raises(NotImplementedError, match="not available in local mode"):
         mock_notebookutils.credentials.getToken("https://api.fabric.microsoft.com")
@@ -151,22 +155,31 @@ def process_data(spark, source_table, target_table):
     df = spark.sql(f"SELECT id, UPPER(name) AS name FROM {source_table}")
     return df
 
+
 # In your test file:
 import pyarrow as pa
 from deltalake import write_deltalake
+
 
 def test_process_data(fabric_spark, lakehouse_root):
     # Set up test data
     table_dir = lakehouse_root / "lh_bronze" / "Tables" / "raw_customers"
     table_dir.mkdir(parents=True)
-    write_deltalake(str(table_dir), pa.table({
-        "id": pa.array([1, 2]),
-        "name": pa.array(["alice", "bob"]),
-    }))
-    
+    write_deltalake(
+        str(table_dir),
+        pa.table(
+            {
+                "id": pa.array([1, 2]),
+                "name": pa.array(["alice", "bob"]),
+            }
+        ),
+    )
+
     # Run the function under test
-    result = process_data(fabric_spark, "lh_bronze.raw_customers", "lh_silver.customers")
-    
+    result = process_data(
+        fabric_spark, "lh_bronze.raw_customers", "lh_silver.customers"
+    )
+
     # Verify
     rows = result.collect()
     assert rows[0]["name"] == "ALICE"

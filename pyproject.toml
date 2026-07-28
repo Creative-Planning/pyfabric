@@ -98,7 +98,11 @@ dev = [
     "allpairspy>=2.5",
     "hypothesis>=6.100",
     "mypy>=1.13",
-    "ruff>=0.8",
+    # Pinned exactly, not floored: a floor gives Dependabot nothing to bump,
+    # so a new ruff enters CI silently on the next fresh install while local
+    # checks keep running an older one. Bump this and the ruff-pre-commit rev
+    # in .pre-commit-config.yaml together — a test enforces that they match.
+    "ruff==0.16.0",
     "pip-audit>=2.7",
     "build>=1.2",
 ]
