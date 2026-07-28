@@ -327,8 +327,10 @@ must not collide (case-insensitively) with column names on the same table.
 | `SqlEndpointSource(name, server, database)` | Import via the SQL analytics endpoint (`Sql.Database` navigation with `Schema=`/`Item=` keys) — works for all schemas incl. schema-enabled lakehouses. `database` is the lakehouse display name. |
 | `SqlDatabaseSource(server, endpoint_id, name="DatabaseQuery")` | DirectLake `entity` partitions over the SQL endpoint. Requires `compatibility_level=1604+`. |
 | `SqlQuerySource(name, server, database)` | DirectQuery — each table sets `Table.query` (native T-SQL, inlined per partition). |
-| `Table(name, source, columns, measures=[], schema="dbo", query=None, ...)` | One table; partition shape follows the source kind. |
+| `StaticSource(name)` | Rows defined **in the model** — each table sets `Table.m_expression` (inline M, typically `#table(...)`). For disconnected scaffolds: a label/ordinal table driving a "label \| value" detail panel, a banding or parameter table. Contributes no expression to `expressions.tmdl`; changing the rows needs only a model refresh, no lakehouse write. |
+| `Table(name, source, columns, measures=[], schema="dbo", query=None, m_expression=None, ...)` | One table; partition shape follows the source kind. |
 | `Column` / `Measure` / `Relationship` | Model objects. Measure names: Title Case with `%`/`#`; column names: snake_case (collision rule above). |
+| `Column(..., sort_by_column="Other")` | Emits `sortByColumn`, so a label column orders by a hidden ordinal instead of alphabetically. Validated to name a different, existing column on the same table. |
 
 `save_to_disk` reuses an existing `.platform` logicalId in the target
 directory when `logical_id` isn't pinned, so rebuild scripts are

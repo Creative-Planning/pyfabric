@@ -90,6 +90,7 @@ Usage::
 """
 
 import re
+import textwrap
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -275,8 +276,51 @@ class SqlEndpointSource:
             )
 
 
+@dataclass
+class StaticSource:
+    """Rows defined **inside the model**, with no external connection.
+
+    For disconnected scaffold tables — a label/ordinal table driving a
+    "label | value" detail panel, a parameter or banding table, a small
+    lookup that has no home in the warehouse. The table's rows come from an
+    inline M expression (typically ``#table(...)``) supplied as
+    :attr:`Table.m_expression`, so nothing has to be materialised upstream
+    just to satisfy the report.
+
+    Contributes no shared expression and no parameters — unlike every other
+    source, it adds nothing to ``expressions.tmdl``. Each table on it emits
+    an import M partition wrapping the caller's expression::
+
+        partition <name> = m
+            mode: import
+            source =
+                    let
+                        Source = #table(type table [Label = text], {{"A"}})
+                    in
+                        Source
+
+    Because the rows live in the model, a change to them needs only a
+    semantic-model refresh — no lakehouse write and no metadata sync.
+    """
+
+    name: str
+    description: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.isidentifier():
+            raise ValueError(
+                f"StaticSource.name must be a valid M identifier, got {self.name!r}"
+            )
+
+
 # Anything a Table can read from.
-Source = LakehouseSource | SqlDatabaseSource | SqlQuerySource | SqlEndpointSource
+Source = (
+    LakehouseSource
+    | SqlDatabaseSource
+    | SqlQuerySource
+    | SqlEndpointSource
+    | StaticSource
+)
 
 
 # ── Columns ─────────────────────────────────────────────────────────────────
@@ -300,6 +344,7 @@ class Column:
     is_hidden: bool = False
     data_category: str | None = None
     source_column: str | None = None  # default = name
+    sort_by_column: str | None = None  # order this column by another one's values
     annotations: dict[str, str] = field(default_factory=dict)
 
 
@@ -377,6 +422,7 @@ class Table:
     is_hidden: bool = False
     data_category: str | None = None
     query: str | None = None
+    m_expression: str | None = None  # required by (and only by) StaticSource
     annotations: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -555,6 +601,36 @@ class SemanticModel:
                     f"{t.name}: Table.query is only valid with a "
                     f"SqlQuerySource source (got {type(t.source).__name__})"
                 )
+
+        # StaticSource tables carry their rows inline; every other source kind
+        # would silently ignore an m_expression, so refuse it there.
+        for t in self.tables:
+            if isinstance(t.source, StaticSource):
+                if not (t.m_expression or "").strip():
+                    errors.append(
+                        f"{t.name}: tables on a StaticSource need an inline M "
+                        f"expression (Table.m_expression)"
+                    )
+            elif t.m_expression is not None:
+                errors.append(
+                    f"{t.name}: Table.m_expression is only valid with a "
+                    f"StaticSource source (got {type(t.source).__name__})"
+                )
+
+        # sortByColumn must name a real column on the same table — Fabric
+        # rejects the model outright when it doesn't resolve.
+        for t in self.tables:
+            col_names = {c.name for c in t.columns}
+            for c in t.columns:
+                if c.sort_by_column is None:
+                    continue
+                if c.sort_by_column not in col_names:
+                    errors.append(
+                        f"{t.name}: column {c.name!r} sorts by "
+                        f"{c.sort_by_column!r}, which is not a column on this table"
+                    )
+                elif c.sort_by_column == c.name:
+                    errors.append(f"{t.name}: column {c.name!r} cannot sort by itself")
 
         # Lakehouse.Contents cannot address non-dbo schemas: against a
         # schema-enabled lakehouse it returns an empty navigation table,
@@ -901,6 +977,8 @@ def _emit_column(t: Table, c: Column) -> str:
         lines.append(f"\t\tdataCategory: {c.data_category}")
     lines.append(f"\t\tsummarizeBy: {c.summarize_by}")
     lines.append(f"\t\tsourceColumn: {c.source_column or c.name}")
+    if c.sort_by_column:
+        lines.append(f"\t\tsortByColumn: {c.sort_by_column}")
     if c.is_key:
         lines.append("\t\tisKey")
     if c.is_hidden:
@@ -944,6 +1022,16 @@ def _emit_sql_endpoint_expression(s: SqlEndpointSource, lineage_tag: str) -> str
 
 def _emit_partition(t: Table) -> str:
     """The ``partition`` block, shaped by the table's source kind."""
+    if isinstance(t.source, StaticSource):
+        # Model-local rows: the caller's M is wrapped verbatim, indented to
+        # TMDL's partition-body depth so callers write plain M and never have
+        # to reason about tab depth. validate() guarantees m_expression is set.
+        assert t.m_expression is not None
+        body = "\n".join(
+            f"\t\t\t\t{line}" if line.strip() else ""
+            for line in textwrap.dedent(t.m_expression).strip().splitlines()
+        )
+        return f"\tpartition {t.name} = m\n\t\tmode: import\n\t\tsource =\n{body}"
     if isinstance(t.source, SqlDatabaseSource):
         # DirectLake entity partition — no per-table M; references the
         # shared Sql.Database expression by name.
