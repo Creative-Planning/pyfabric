@@ -136,16 +136,18 @@ For recovery, use Delta time-travel on the mirrored table
    before constructing the arrow table:
 
    ```python
-   PINNED = pa.schema([
-       pa.field("employee_id", pa.string(),                 nullable=False),
-       pa.field("date",        pa.date32(),                 nullable=False),
-       pa.field("hours",       pa.float64(),                nullable=True),
-       pa.field("fetched_at",  pa.timestamp("us", tz="UTC"), nullable=False),
-   ])
+   PINNED = pa.schema(
+       [
+           pa.field("employee_id", pa.string(), nullable=False),
+           pa.field("date", pa.date32(), nullable=False),
+           pa.field("hours", pa.float64(), nullable=True),
+           pa.field("fetched_at", pa.timestamp("us", tz="UTC"), nullable=False),
+       ]
+   )
 
    pdf = df.toPandas()
-   pdf["date"]       = pd.to_datetime(pdf["date"]).dt.date
-   pdf["hours"]      = pd.to_numeric(pdf["hours"], errors="coerce")
+   pdf["date"] = pd.to_datetime(pdf["date"]).dt.date
+   pdf["hours"] = pd.to_numeric(pdf["hours"], errors="coerce")
    pdf["fetched_at"] = pd.Timestamp.now(tz="UTC")
    arrow = pa.Table.from_pandas(pdf, schema=PINNED, safe=True)
    ```
