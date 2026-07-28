@@ -277,7 +277,9 @@ from pyfabric.items.datapipeline import DataPipelineBuilder
 
 pl = DataPipelineBuilder(description="Daily refresh")
 pl.add_notebook_activity("Extract", "ws/nb_extract.Notebook", parameters={"path": ""})
-pl.add_notebook_activity("Transform", "ws/nb_transform.Notebook", depends_on=["Extract"])
+pl.add_notebook_activity(
+    "Transform", "ws/nb_transform.Notebook", depends_on=["Extract"]
+)
 pl.save_to_disk("ws/", display_name="pl_daily")
 ```
 

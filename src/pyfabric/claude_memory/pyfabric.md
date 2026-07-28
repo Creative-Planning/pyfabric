@@ -73,11 +73,13 @@ for the current shell is the tenant pyfabric talks to. Pass `tenant=` to
 ```python
 # List workspaces
 from pyfabric.workspace import workspaces
+
 for ws in workspaces.list(cred):
     print(ws.id, ws.display_name)
 
 # Query a lakehouse table via OneLake + DuckDB
 from pyfabric.data import LocalLakehouse
+
 lh = LocalLakehouse(cred, workspace_id=WS, lakehouse_id=LH)
 df = lh.query("SELECT * FROM {table} LIMIT 10", table="customers")
 ```

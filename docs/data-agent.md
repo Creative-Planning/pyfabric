@@ -67,7 +67,7 @@ from pyfabric.items.normalize import normalize_tree
 from pyfabric.items.validate import validate_item
 
 validate_item(Path("ws/da_example.DataAgent"))
-normalize_tree(Path("ws/"), dry_run=True)   # pre-push flap check
+normalize_tree(Path("ws/"), dry_run=True)  # pre-push flap check
 ```
 
 ## Querying a published agent: `DataAgentClient`
@@ -80,7 +80,7 @@ a pytest fixture):
 ```python
 from pyfabric.testing.data_agent import DataAgentClient
 
-client = DataAgentClient(workspace_id, agent_id)   # az login suffices
+client = DataAgentClient(workspace_id, agent_id)  # az login suffices
 answer = client.ask("What was total revenue last month?")
 ```
 
@@ -103,8 +103,8 @@ artifact ships.
 ```python
 from pyfabric.items.data_agent import lint_data_agent, validate_instructions
 
-lint_data_agent(Path("ws/da_example.DataAgent"))   # finding messages
-validate_instructions(instructions_text)           # raises when missing
+lint_data_agent(Path("ws/da_example.DataAgent"))  # finding messages
+validate_instructions(instructions_text)  # raises when missing
 ```
 
 `validate_item` runs the lint automatically for DataAgent folders and

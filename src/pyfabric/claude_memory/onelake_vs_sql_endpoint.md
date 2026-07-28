@@ -31,16 +31,19 @@ history, quick scans.
 ```python
 # Discovery — prefer this
 from pyfabric.data import LocalLakehouse
+
 lh = LocalLakehouse(cred, workspace_id=WS, lakehouse_id=LH)
 df = lh.query("SELECT COUNT(*) FROM {table}", table="customers")
 
 # Schema inspection without downloading data
 from deltalake import DeltaTable
 from pyfabric.data.onelake import abfs_path
+
 schema = DeltaTable(abfs_path(WS, LH, "Tables/customers"), storage_options=...).schema()
 
 # SQL endpoint — for joins or endpoint validation
 from pyfabric.data.sql import FabricSql
+
 sql = FabricSql(server=..., database=..., credential=cred)
 df = sql.query_df("SELECT a.id, b.name FROM a JOIN b ON a.id = b.id")
 ```
