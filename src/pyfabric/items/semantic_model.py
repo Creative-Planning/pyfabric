@@ -916,7 +916,7 @@ def _emit_table(t: Table) -> str:
     parts: list[str] = []
     if t.description:
         parts.extend(_doc_comment(t.description))
-    parts.append(f"table {t.name}")
+    parts.append(f"table {_ident(t.name)}")
     parts.append(f"\tlineageTag: {_lineage(t.name)}")
     if t.is_hidden:
         parts.append("\tisHidden")
@@ -968,7 +968,7 @@ def _emit_column(t: Table, c: Column) -> str:
     lines: list[str] = []
     if c.description:
         lines.extend(_doc_comment(c.description, indent="\t"))
-    lines.append(f"\tcolumn {c.name}")
+    lines.append(f"\tcolumn {_ident(c.name)}")
     lines.append(f"\t\tdataType: {c.data_type}")
     if c.format_string is not None:
         lines.append(f"\t\tformatString: {c.format_string}")
@@ -978,7 +978,7 @@ def _emit_column(t: Table, c: Column) -> str:
     lines.append(f"\t\tsummarizeBy: {c.summarize_by}")
     lines.append(f"\t\tsourceColumn: {c.source_column or c.name}")
     if c.sort_by_column:
-        lines.append(f"\t\tsortByColumn: {c.sort_by_column}")
+        lines.append(f"\t\tsortByColumn: {_ident(c.sort_by_column)}")
     if c.is_key:
         lines.append("\t\tisKey")
     if c.is_hidden:
@@ -1031,12 +1031,14 @@ def _emit_partition(t: Table) -> str:
             f"\t\t\t\t{line}" if line.strip() else ""
             for line in textwrap.dedent(t.m_expression).strip().splitlines()
         )
-        return f"\tpartition {t.name} = m\n\t\tmode: import\n\t\tsource =\n{body}"
+        return (
+            f"\tpartition {_ident(t.name)} = m\n\t\tmode: import\n\t\tsource =\n{body}"
+        )
     if isinstance(t.source, SqlDatabaseSource):
         # DirectLake entity partition — no per-table M; references the
         # shared Sql.Database expression by name.
         return (
-            f"\tpartition {t.name} = entity\n"
+            f"\tpartition {_ident(t.name)} = entity\n"
             "\t\tmode: directLake\n"
             "\t\tsource\n"
             f"\t\t\tentityName: {t.name}\n"
@@ -1053,7 +1055,7 @@ def _emit_partition(t: Table) -> str:
         one_line = re.sub(r"\s*\n\s*", " ", t.query.strip())
         escaped_query = one_line.replace('"', '""')
         return (
-            f"\tpartition {t.name} = m\n"
+            f"\tpartition {_ident(t.name)} = m\n"
             "\t\tmode: directQuery\n"
             "\t\tsource =\n"
             "\t\t\t\tlet\n"
@@ -1069,7 +1071,7 @@ def _emit_partition(t: Table) -> str:
         # schema-enabled lakehouses where Lakehouse.Contents returns
         # nothing.
         return (
-            f"\tpartition {t.name} = m\n"
+            f"\tpartition {_ident(t.name)} = m\n"
             "\t\tmode: import\n"
             "\t\tsource =\n"
             "\t\t\t\tlet\n"
@@ -1079,7 +1081,7 @@ def _emit_partition(t: Table) -> str:
             "\t\t\t\t    tbl"
         )
     return (
-        f"\tpartition {t.name} = m\n"
+        f"\tpartition {_ident(t.name)} = m\n"
         "\t\tmode: import\n"
         "\t\tsource =\n"
         "\t\t\t\tlet\n"
@@ -1113,3 +1115,24 @@ def _doc_comment(text: str, *, indent: str = "") -> list[str]:
     string, preserving line breaks between them.
     """
     return [f"{indent}/// {line}" for line in text.splitlines() or [""]]
+
+
+# A TMDL name is safe bare only if it is a plain identifier-ish token. Anything
+# else — a space, a hyphen, a dot, a leading digit — has to be single-quoted or
+# TMDL mis-parses the declaration. `Vendor Info Labels` emitted bare reads as the
+# name `Vendor` followed by junk.
+_TMDL_BARE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _ident(name: str) -> str:
+    """A TMDL object name, single-quoted when it cannot stand bare.
+
+    Applies to table / column / partition / sortByColumn references. Measures
+    are always quoted at their emit site (harmless and pre-existing), so this is
+    about the declarations that were previously emitted bare.
+
+    Embedded single quotes are doubled, which is TMDL's escape.
+    """
+    if _TMDL_BARE_NAME.match(name):
+        return name
+    return "'" + name.replace("'", "''") + "'"
