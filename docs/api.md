@@ -336,7 +336,18 @@ must not collide (case-insensitively) with column names on the same table.
 
 `save_to_disk` reuses an existing `.platform` logicalId in the target
 directory when `logical_id` isn't pinned, so rebuild scripts are
-identity-stable (same for `Report` and every bundle-based builder).
+identity-stable (same for `Report` and every bundle-based builder). It also
+reuses the `ref table` order from an existing `model.tmdl`: Fabric's order
+reflects its internal table collection and cannot be recomputed, so preserving
+it keeps a regenerate byte-identical to whatever Fabric last wrote instead of
+flapping on every sync. New tables append in declared order.
+
+Emitted TMDL matches the canonical form Fabric writes back on a portal edit —
+column property order (`isKey`/`isHidden` directly after `dataType`), a blank
+line before column annotations, un-indented model annotations followed by
+`ref table` / `ref cultureInfo` declarations, `compatibilityLevel: 1606`,
+`definition.pbism` at version 4.2, and literal UTF-8 in `.platform`. Diverging
+on any of these is semantically harmless but produces a permanent sync diff.
 
 ### pyfabric.items.report
 
