@@ -516,7 +516,7 @@ class SemanticModel:
     tables: list[Table]
     relationships: list[Relationship] = field(default_factory=list)
     description: str = ""
-    compatibility_level: int = 1567
+    compatibility_level: int = 1606
     culture: str = "en-US"
     annotations: dict[str, str] = field(default_factory=dict)
     strict_descriptions: bool = True
@@ -722,7 +722,10 @@ class SemanticModel:
         write_artifact_file(item_dir / ".platform", self._emit_platform())
         write_artifact_file(item_dir / "definition.pbism", self._emit_pbism())
         write_artifact_file(definition / "database.tmdl", self._emit_database())
-        write_artifact_file(definition / "model.tmdl", self._emit_model())
+        write_artifact_file(
+            definition / "model.tmdl",
+            self._emit_model(_existing_ref_order(definition / "model.tmdl")),
+        )
         expressions = self._emit_expressions()
         if expressions:
             # A model whose only sources are SqlQuerySource has no shared
@@ -778,17 +781,30 @@ class SemanticModel:
                 "config": {"version": "2.0", "logicalId": self.logical_id},
             },
             indent=2,
+            # Fabric writes literal UTF-8 (an em-dash stays an em-dash). JSON's
+            # default ASCII escaping round-trips as a diff on every sync.
+            ensure_ascii=False,
         )
 
     def _emit_pbism(self) -> str:
         import json
 
-        return json.dumps({"version": "4.0", "settings": {}}, indent=2)
+        return json.dumps(
+            {
+                "$schema": (
+                    "https://developer.microsoft.com/json-schemas/fabric/item/"
+                    "semanticModel/definitionProperties/1.0.0/schema.json"
+                ),
+                "version": "4.2",
+                "settings": {},
+            },
+            indent=2,
+        )
 
     def _emit_database(self) -> str:
         return f"database\n\tcompatibilityLevel: {self.compatibility_level}"
 
-    def _emit_model(self) -> str:
+    def _emit_model(self, ref_order: list[str] | None = None) -> str:
         # PBI_QueryOrder lists every M query in the model: the parameter +
         # navigation expressions a source contributes (LakehouseSource
         # brings three, SqlDatabaseSource/SqlEndpointSource one each,
@@ -816,8 +832,16 @@ class SemanticModel:
             "__PBI_TimeIntelligenceEnabled": "0",
         }
         merged_annotations = {**auto_annotations, **self.annotations}
+        # Fabric writes model-level annotations at column 0, not tab-indented,
+        # and follows them with explicit `ref` declarations for every table file
+        # and the culture. Omitting the refs is valid TMDL — Fabric just adds
+        # them back on the next portal edit, which reads as a spurious diff.
         annotation_block = "\n\n".join(
-            f"\tannotation {k} = {v}" for k, v in merged_annotations.items()
+            f"annotation {k} = {v}" for k, v in merged_annotations.items()
+        )
+        table_refs = "\n".join(
+            f"ref table {_ident(name)}"
+            for name in _ordered_table_names([t.name for t in self.tables], ref_order)
         )
         return (
             "model Model\n"
@@ -828,7 +852,11 @@ class SemanticModel:
             "\t\tlegacyRedirects\n"
             "\t\treturnErrorValuesAsNull\n"
             "\n"
-            f"{annotation_block}"
+            f"{annotation_block}\n"
+            "\n"
+            f"{table_refs}\n"
+            "\n"
+            f"ref cultureInfo {self.culture}"
         )
 
     def _emit_expressions(self) -> str:
@@ -969,7 +997,16 @@ def _emit_column(t: Table, c: Column) -> str:
     if c.description:
         lines.extend(_doc_comment(c.description, indent="\t"))
     lines.append(f"\tcolumn {_ident(c.name)}")
+    # Property order matches what Fabric itself writes back on a portal edit:
+    # dataType, isKey/isHidden, formatString, lineageTag, dataCategory,
+    # summarizeBy, sourceColumn, sortByColumn, then a BLANK line before the
+    # annotations. Emitting isKey/isHidden last (as this did) is semantically
+    # identical but diffs against Fabric's form on every sync.
     lines.append(f"\t\tdataType: {c.data_type}")
+    if c.is_key:
+        lines.append("\t\tisKey")
+    if c.is_hidden:
+        lines.append("\t\tisHidden")
     if c.format_string is not None:
         lines.append(f"\t\tformatString: {c.format_string}")
     lines.append(f"\t\tlineageTag: {_lineage(t.name, 'column', c.name)}")
@@ -979,12 +1016,9 @@ def _emit_column(t: Table, c: Column) -> str:
     lines.append(f"\t\tsourceColumn: {c.source_column or c.name}")
     if c.sort_by_column:
         lines.append(f"\t\tsortByColumn: {_ident(c.sort_by_column)}")
-    if c.is_key:
-        lines.append("\t\tisKey")
-    if c.is_hidden:
-        lines.append("\t\tisHidden")
     # Auto-emit SummarizationSetBy = Automatic unless caller overrides it.
     column_annotations = {"SummarizationSetBy": "Automatic", **c.annotations}
+    lines.append("")
     for k, v in column_annotations.items():
         lines.append(f"\t\tannotation {k} = {v}")
     return "\n".join(lines)
@@ -1122,6 +1156,50 @@ def _doc_comment(text: str, *, indent: str = "") -> list[str]:
 # TMDL mis-parses the declaration. `Vendor Info Labels` emitted bare reads as the
 # name `Vendor` followed by junk.
 _TMDL_BARE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+_REF_TABLE_LINE = re.compile(r"^ref table (.+)$", re.M)
+
+
+def _existing_ref_order(model_tmdl: Path) -> list[str] | None:
+    """Table names in the order an existing ``model.tmdl`` refs them.
+
+    ``None`` when there is no readable prior file. Fabric's ``ref table`` order
+    reflects its internal table collection, not anything derivable from the model
+    definition — so it cannot be recomputed, only preserved. Reusing the observed
+    order is the same principle already applied to ``logicalId``: whatever Fabric
+    last wrote wins, so regeneration is idempotent instead of flip-flopping on
+    every sync.
+    """
+    try:
+        text = model_tmdl.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    names = []
+    for raw in _REF_TABLE_LINE.findall(text):
+        token = raw.strip()
+        if token.startswith("'") and token.endswith("'") and len(token) >= 2:
+            token = token[1:-1].replace("''", "'")
+        names.append(token)
+    return names or None
+
+
+def _ordered_table_names(declared: list[str], ref_order: list[str] | None) -> list[str]:
+    """Declared tables, reordered to match a prior ``ref table`` block.
+
+    Tables the prior file listed keep that relative order; tables it did not
+    mention (newly added ones) follow in declared order. Names in the prior file
+    that no longer exist are dropped.
+    """
+    if not ref_order:
+        return declared
+    remaining = list(declared)
+    out = []
+    for name in ref_order:
+        if name in remaining:
+            out.append(name)
+            remaining.remove(name)
+    return out + remaining
 
 
 def _ident(name: str) -> str:
