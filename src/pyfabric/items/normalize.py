@@ -14,18 +14,18 @@ commits directly:
 | ``*.Notebook/notebook-content.sql``           | LF           | Yes (LF)    |
 | ``*.SemanticModel/**/*.tmdl``                 | LF           | Blank (LFLF)|
 | ``*.DataPipeline/pipeline-content.json``      | LF           | No          |
-| ``*.DataAgent/**`` (including ``.platform``)  | CRLF         | No          |
+| ``*.DataAgent/.platform``                     | LF           | No          |
+| ``*.DataAgent/**`` (except ``.platform``)     | CRLF         | No          |
 | everything else in Fabric artifact folders    | LF           | No          |
 
-DataAgent is the one item type Fabric serializes entirely as CRLF —
-**including its ``.platform`` file**, which every other type emits as LF.
-Verified from a Fabric-authored auto-commit ("Committing N items from
-workspace …") covering all seven files of a published data agent
-(``data_agent.json``, ``publish_info.json``, draft + published
-``stage_config.json`` and ``datasource.json``, ``.platform``): every file
-ends ``…\\r\\n}`` with no trailing newline. Single workspace so far — same
-epistemic status as the TMDL trailing-blank-line note below when it was
-first recorded.
+DataAgent's Files/Config JSON is CRLF with no trailing newline, but its
+``.platform`` file is LF, like every other item type. Verified from three
+Fabric-authored commits for one published data agent (issue #149): each
+``.platform`` is pure LF with no trailing newline, while
+``data_agent.json``, ``publish_info.json``, ``stage_config.json`` and
+``datasource.json`` are pure CRLF. An earlier note recorded ``.platform`` as
+CRLF from a single auto-commit; the later, larger sample supersedes it.
+Single workspace so far.
 
 SemanticModel ``*.tmdl`` files are the one type Fabric ends with a trailing
 **blank line** (two LF bytes, ``…content\\n\\n``), not zero and not one. Verified
@@ -134,9 +134,11 @@ _RULES: tuple[tuple[str, str, bool, bool], ...] = (
     # LF + trailing LF
     ("*.Notebook/notebook-content.py", "\n", True, False),
     ("*.Notebook/notebook-content.sql", "\n", True, False),
-    # CRLF + no trailing — Fabric emits every DataAgent file (even .platform)
-    # as CRLF. A bare ``*`` spans ``/`` under fnmatch, so this one glob covers
-    # .platform and all nested Files/Config/** JSON alike.
+    # LF + no trailing — DataAgent's .platform is LF like every other item type.
+    # It must come before the DataAgent catch-all, which is CRLF (issue #149).
+    ("*.DataAgent/.platform", "\n", False, False),
+    # CRLF + no trailing — DataAgent's Files/Config JSON. A bare ``*`` spans ``/``
+    # under fnmatch, so this one glob covers all nested Files/Config/** JSON.
     ("*.DataAgent/*", "\r\n", False, False),
     # LF + trailing BLANK line — Fabric ends every SemanticModel TMDL with "\n\n"
     ("*.SemanticModel/*.tmdl", "\n", False, True),
@@ -218,10 +220,13 @@ def canonical_bytes(rel_path: str, raw: bytes) -> bytes:
         while lines and lines[-1] == "":
             lines.pop()
         return (rule.line_ending.join(lines) + rule.line_ending * 2).encode("utf-8")
-    joined = rule.line_ending.join(lines)
     if rule.trailing_newline:
-        joined += rule.line_ending
-    return joined.encode("utf-8")
+        # Drop extra trailing blank lines as well as adding a missing newline, so the
+        # result is a fixed point (issue #150: "a\n\n" must become "a\n").
+        while lines and lines[-1] == "":
+            lines.pop()
+        return (rule.line_ending.join(lines) + rule.line_ending).encode("utf-8")
+    return rule.line_ending.join(lines).encode("utf-8")
 
 
 def write_artifact_file(
