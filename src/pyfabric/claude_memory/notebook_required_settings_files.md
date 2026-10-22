@@ -55,7 +55,7 @@ cp nb_OK_notebook.Notebook/fs-settings.json \
 
 Then commit + push, and re-add the missing Resources file in a follow-up commit.
 
-## Recap
+## Recap: settings files
 
 - `notebook-settings.json` + `fs-settings.json` are **required**, not optional, for any git-synced notebook that needs Fabric to honor its Resources folder.
 - CRLF, no trailing newline, no BOM.
