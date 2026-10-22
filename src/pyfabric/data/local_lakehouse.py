@@ -481,9 +481,14 @@ class LocalLakehouse:
 
         effective_target = target_schema or self.schema
 
-        # .arrow() returns RecordBatchReader; .read_all() materializes to Table
-        reader = self._conn.execute(f"SELECT * FROM {self.schema}.{table_name}").arrow()
-        arrow_table = reader.read_all() if hasattr(reader, "read_all") else reader
+        # DuckDB 2.x removed .arrow() from query results; to_arrow_table() is the
+        # supported call there. Older releases keep .arrow() as the fallback.
+        result = self._conn.execute(f"SELECT * FROM {self.schema}.{table_name}")
+        arrow_table = (
+            result.to_arrow_table()
+            if hasattr(result, "to_arrow_table")
+            else result.arrow()
+        )
 
         if arrow_table.num_rows == 0 and skip_empty:
             log.info("skipping_empty_table", table=table_name)
