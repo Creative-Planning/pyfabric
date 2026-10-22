@@ -36,9 +36,8 @@ class TestRuleFor:
             # DataPipeline — LF, no trailing newline
             ("pl.DataPipeline/pipeline-content.json", "\n", False),
             ("pl.DataPipeline/.platform", "\n", False),
-            # DataAgent — CRLF, no trailing newline, INCLUDING .platform
-            # (the one item type whose .platform Fabric emits as CRLF)
-            ("da.DataAgent/.platform", "\r\n", False),
+            # DataAgent — .platform is LF like every other item (issue #149)
+            ("da.DataAgent/.platform", "\n", False),
             ("da.DataAgent/Files/Config/data_agent.json", "\r\n", False),
             ("da.DataAgent/Files/Config/publish_info.json", "\r\n", False),
             ("da.DataAgent/Files/Config/draft/stage_config.json", "\r\n", False),
@@ -268,9 +267,9 @@ class TestNormalizeTree:
         )
 
     def test_covers_data_agent(self, tmp_path: Path):
-        # DataAgent artifacts are CRLF + no trailing newline for EVERY file,
-        # .platform included — LF-committed files must be rewritten to CRLF,
-        # and already-canonical Fabric bytes must be left untouched.
+        # DataAgent's Files/Config is CRLF + no trailing newline; .platform is LF
+        # (issue #149). Drifted files are rewritten to their own rule, and
+        # already-canonical Fabric bytes must be left untouched.
         da = tmp_path / "da.DataAgent"
         (da / "Files" / "Config" / "draft" / "lakehouse-tables-lh_x").mkdir(
             parents=True
@@ -296,7 +295,7 @@ class TestNormalizeTree:
         assert stage in result.changed
         assert (da / "Files" / "Config" / "data_agent.json") not in result.changed
         assert ds not in result.changed
-        assert (da / ".platform").read_bytes() == b'{\r\n  "k": "v"\r\n}'
+        assert (da / ".platform").read_bytes() == b'{\n  "k": "v"\n}'
         assert stage.read_bytes() == b'{\r\n  "aiInstructions": "..."\r\n}'
         # Idempotent — second pass is a no-op.
         assert normalize_tree(tmp_path).is_canonical

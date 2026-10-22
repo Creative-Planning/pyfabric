@@ -201,15 +201,17 @@ def _iter_measure_expressions(tmdl_text: str) -> list[tuple[str, str]]:
 
     Handles both the single-line form (``measure 'X' = SUM(...)``) and
     the indented multiline form. The expression body ends at the first
-    property line (``formatString:``, ``lineageTag:``, ...), declaration,
-    or blank line — hand-authored DAX with internal blank lines is
-    truncated there (acceptable for a lint).
+    property line (``formatString:``, ``lineageTag:``, ...) or declaration.
+    A blank line stays inside the body while the next content line is still
+    indented under the measure header, so DAX with internal blank lines is
+    read whole.
     """
     results: list[tuple[str, str]] = []
     lines = tmdl_text.splitlines()
     i = 0
     while i < len(lines):
         m = _MEASURE_HEADER_RE.match(lines[i])
+        header_indent = len(lines[i]) - len(lines[i].lstrip())
         i += 1
         if not m:
             continue
@@ -217,8 +219,21 @@ def _iter_measure_expressions(tmdl_text: str) -> list[tuple[str, str]]:
         body = [m.group("rest")]
         while i < len(lines):
             line = lines[i]
-            if not line.strip() or _BLOCK_TERMINATOR_RE.match(line):
+            if _BLOCK_TERMINATOR_RE.match(line):
                 break
+            if not line.strip():
+                # A blank line inside a DAX body is part of it when the next content
+                # line is still indented under the measure header (issue #148).
+                j = i
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j >= len(lines) or _BLOCK_TERMINATOR_RE.match(lines[j]):
+                    break
+                if len(lines[j]) - len(lines[j].lstrip()) <= header_indent:
+                    break
+                body.extend([""] * (j - i))
+                i = j
+                continue
             body.append(line)
             i += 1
         results.append((name, "\n".join(body)))
