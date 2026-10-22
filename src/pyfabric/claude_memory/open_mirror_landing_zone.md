@@ -31,7 +31,7 @@ Files/LandingZone/[<schema>.schema/]<table>/<NNNNNNNNNNNNNNNNNNNN>.parquet
 ```
 
 - `<schema>.schema/` is **optional**. Use it to namespace multiple
-  sources inside one mirror (e.g. `youtube.schema/` and `skool.schema/`
+  sources inside one mirror (e.g. `youtube.schema/` and `courses.schema/`
   side by side).
 - `<table>/` — one folder per logical table. Creating the folder (or
   uploading the first file under it) creates the table in the mirror's
