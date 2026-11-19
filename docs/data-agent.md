@@ -1,24 +1,22 @@
 # Data Agents
 
-How pyfabric supports Fabric Data Agents — and, just as deliberately, what
-it delegates to Microsoft's own tooling.
+Microsoft provides tools for authoring, publishing, and querying Fabric Data
+Agents. pyfabric validates their git-sync artifacts and provides a pytest
+fixture for testing published answers.
 
-## Scope: adopt-first, validate-native
-
-Microsoft now ships first-party tooling for most of the data agent
-lifecycle. pyfabric does **not** duplicate it:
+## Choose a tool for each operation
 
 | Concern | Use | Notes |
 | --- | --- | --- |
-| Create/configure/publish agents | [`fabric-data-agent-sdk`](https://learn.microsoft.com/en-us/fabric/data-science/fabric-data-agent-sdk) | Management-plane SDK over the public REST API. Runs inside Fabric notebooks **and** externally (Azure CLI / SPN credential). Covers datasources, table selection, agent + datasource instructions, example queries, publish. |
-| Query a published agent | [MCP endpoint](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-mcp-server) | `https://api.fabric.microsoft.com/v1/mcp/workspaces/{ws}/dataagents/{id}/agent`, bearer token for `https://api.fabric.microsoft.com/.default`. Works only after publish. The older OpenAI-Assistants-based external client is deprecated (shutdown 2026-08-26). |
+| Create/configure/publish agents | [`fabric-data-agent-sdk`](https://learn.microsoft.com/en-us/fabric/data-science/fabric-data-agent-sdk) | Preview SDK for data sources, table selection, instructions, example queries and publishing. Follow the SDK's supported Python range and authentication setup. See [the verified versions and dependency constraints](ecosystem.md#verified-baseline). |
+| Query a published agent | [MCP endpoint](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-mcp-server) | `https://api.fabric.microsoft.com/v1/mcp/workspaces/{ws}/dataagents/{id}/agent`, bearer token for `https://api.fabric.microsoft.com/.default`. Works only after publish. Use this endpoint for data-agent questions. |
 | LLM-critic evaluation | `evaluate_data_agent` in the same SDK | Ground-truth Q&A pairs + critic prompt, results to a lakehouse table. |
 | Instruction-writing guidance | [Configuration best practices](https://learn.microsoft.com/en-us/fabric/data-science/data-agent-configuration-best-practices) | Objective / data-source priority / key-terminology format, SQL fragments, example values. |
 | Deploy from git | [`fabric-cicd`](https://microsoft.github.io/fabric-cicd/) | Officially supported; `DataAgent` is among its supported item types. |
 
-What pyfabric owns is the part none of those cover: **keeping the
-git-synced artifact healthy** — structure validation and byte-exact
-normalization so the folder never flaps or corrupts on sync.
+Use pyfabric for git-sync structure validation, byte normalization, and
+instruction lint. The published data-agent endpoint and the [Fabric Core MCP
+server](ecosystem.md) serve different workflows.
 
 ## Git-sync format
 
@@ -51,12 +49,9 @@ da_example.DataAgent/
 
 ## Byte conventions
 
-DataAgent is the one item type Fabric serializes entirely as **CRLF with
-no trailing newline — including `.platform`**, which every other type
-emits as LF. Verified from a Fabric-authored auto-commit covering all
-seven files of a published agent (single workspace so far; recorded with
-the same epistemic status as the SemanticModel TMDL trailing-blank-line
-rule when it was first observed).
+DataAgent config JSON uses CRLF and its `.platform` uses LF. Both omit a
+trailing newline. The current convention was verified from three Fabric-authored commits for
+one published agent in one workspace, as recorded in [issue #149](https://github.com/Creative-Planning/pyfabric/issues/149).
 
 `normalize_tree` / `write_artifact_file` / `is_canonical` handle this
 automatically; `validate_item` checks the folder structure:
@@ -78,13 +73,15 @@ house rails (`FabricCredential` token acquisition, URL construction,
 a pytest fixture):
 
 ```python
+# docs-snippet: network
 from pyfabric.testing.data_agent import DataAgentClient
 
-client = DataAgentClient(workspace_id, agent_id)  # az login suffices
-answer = client.ask("What was total revenue last month?")
+client = DataAgentClient(workspace_id, agent_id, credential=cred)
+answer = client.ask("How many products are in the synthetic catalog?")
 ```
 
-Install the transport with `pip install pyfabric[dataagent]`. The agent
+Install the transport with `pip install pyfabric[dataagent]`. When `credential`
+is omitted, the client uses `FabricCredential`. The agent
 must be **published** — Fabric serves the MCP endpoint only for the
 published stage.
 
@@ -101,6 +98,8 @@ terminology) are linted, and missing ones are surfaced before the
 artifact ships.
 
 ```python
+from pathlib import Path
+
 from pyfabric.items.data_agent import lint_data_agent, validate_instructions
 
 lint_data_agent(Path("ws/da_example.DataAgent"))  # finding messages

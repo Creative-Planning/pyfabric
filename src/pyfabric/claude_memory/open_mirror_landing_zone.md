@@ -182,6 +182,10 @@ When the source already provides a change-type column, stamp
 auto-stamp path can only emit a single marker per file.
 
 ```python
+# docs-snippet: network
+from pyfabric.data.open_mirror import OpenMirrorClient
+
+mirror = OpenMirrorClient(cred, ws_id, mirror_id)
 _CHANGE_TYPE_MAP = {"INSERT": 0, "UPDATE": 1, "DELETE": 2, "UPSERT": 4}
 markers = [_CHANGE_TYPE_MAP[v] for v in pdf["change_type"].str.upper()]
 
@@ -190,7 +194,7 @@ arrow_table = arrow_table.append_column(
     pa.array(markers, type=pa.int32()),
 )
 
-mirror.write_rows(table, arrow_table, schema=..., mode=None)
+mirror.write_rows(table, arrow_table, schema=schema_name, mode=None)
 ```
 
 Requirements:

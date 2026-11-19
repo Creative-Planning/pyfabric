@@ -23,6 +23,7 @@ class TestPackagedMemory:
         names = [n for n, _ in _iter_package_memory()]
         assert "MEMORY.md" in names
         assert "pyfabric.md" in names
+        assert "mcp_vs_pyfabric.md" in names
 
     def test_index_sorted_first(self):
         names = [n for n, _ in _iter_package_memory()]

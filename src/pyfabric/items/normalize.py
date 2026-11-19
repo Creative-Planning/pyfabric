@@ -238,18 +238,17 @@ def write_artifact_file(
     """Write content to a Fabric artifact file in the canonical byte format.
 
     Use this in place of ``Path.write_text`` / ``Path.write_bytes``
-    anywhere inside a Fabric artifact folder. The rule applied is
-    inferred from ``path``'s position relative to ``workspace_root``
-    (or its filename pattern alone if ``workspace_root`` is ``None``).
+    anywhere inside a Fabric artifact folder.
 
     Args:
         path: Destination path. Parent directories are created if missing.
         content: File content. Strings are encoded as UTF-8 first; bytes
             are processed as-is.
         workspace_root: Root directory used to compute the relative path
-            for rule matching. If ``None``, ``path.name`` is used, which
-            is enough for most cases (the rules key off filename + nearest
-            ``*.{ItemType}`` ancestor).
+            for rule matching. If ``None``, use the nearest recognized item
+            folder with a ``.platform`` file, falling back to an item suffix
+            or the filename. An item's own ``.platform`` uses its containing
+            item folder even on the first write.
     """
     raw = content.encode("utf-8") if isinstance(content, str) else content
     rel = _relative_for_rule(path, workspace_root)
@@ -258,7 +257,11 @@ def write_artifact_file(
 
 
 def is_canonical(path: Path, *, workspace_root: Path | None = None) -> bool:
-    """Return True if ``path``'s bytes already match the canonical form."""
+    """Return True if ``path``'s bytes already match the canonical form.
+
+    Uses the same workspace root and item folder inference as
+    ``write_artifact_file``.
+    """
     raw = path.read_bytes()
     rel = _relative_for_rule(path, workspace_root)
     return canonical_bytes(rel, raw) == raw
@@ -317,19 +320,29 @@ def _relative_with_fwdslash(p: Path, root: Path) -> str:
 def _relative_for_rule(path: Path, workspace_root: Path | None) -> str:
     """Compute the path string used to look up a rule.
 
-    With a workspace root, returns the full relative path (forward slashes)
-    so globs anchored at ``*.{ItemType}/`` match. Without it, walks up
-    looking for the nearest ``*.{ItemType}`` ancestor and reconstructs a
-    relative path from there. Falls back to the bare filename if no such
-    ancestor exists — adequate for the catch-all ``"*"`` rule but means
-    file-type-specific rules (e.g. CRLF for ``alm.settings.json``) only
-    fire when an item folder is present in the path.
+    An explicit workspace root determines the relative path. Otherwise, use
+    the nearest recognized item folder with a ``.platform`` file. For a
+    ``.platform`` path itself, its recognized parent is the item folder,
+    including before the file exists. If no marker is found, fall back to
+    the nearest item suffix or the bare filename.
     """
     if workspace_root is not None:
         return _relative_with_fwdslash(path, workspace_root)
+
+    nearest_item = None
     for ancestor in path.parents:
-        if "." in ancestor.name and ancestor.name.split(".")[-1] in _ITEM_TYPES:
+        _, dot, suffix = ancestor.name.rpartition(".")
+        if not dot or suffix not in _ITEM_TYPES:
+            continue
+        if nearest_item is None:
+            nearest_item = ancestor
+        if (path.name == ".platform" and ancestor == path.parent) or (
+            ancestor / ".platform"
+        ).is_file():
             return _relative_with_fwdslash(path, ancestor.parent)
+
+    if nearest_item is not None:
+        return _relative_with_fwdslash(path, nearest_item.parent)
     return path.name
 
 
@@ -347,5 +360,8 @@ _ITEM_TYPES: frozenset[str] = frozenset(
         "MirroredDatabase",
         "DataPipeline",
         "DataAgent",
+        "Warehouse",
+        "Ontology",
+        "Map",
     }
 )

@@ -8,6 +8,13 @@
 Python library for creating, validating, and locally testing Microsoft Fabric
 items that are compatible with Fabric git sync.
 
+Use Fabric MCP for ad-hoc agent operations and `fab` for interactive terminal
+work. Use pyfabric to build and validate git-sync artifacts, test locally, or
+publish in dependency order from Python to workspaces without Git integration.
+For a Git-connected workspace, build and validate the artifacts, commit and push
+them, and have the workspace owner manually sync in Fabric.
+See [Microsoft Fabric tooling and pyfabric](docs/ecosystem.md) for the tool matrix.
+
 ## Installation
 
 ```bash
@@ -35,13 +42,21 @@ depending on your assistant:
 **Claude Code** — one command, installs into your active Claude profile:
 
 ```bash
-pyfabric install-claude-memory            # $CLAUDE_CONFIG_DIR/memory or ~/.claude/memory
+pyfabric install-claude-memory            # active profile projects/<home-slug>/memory
 pyfabric install-claude-memory --dry-run  # show what would change
-pyfabric install-claude-memory --force    # overwrite locally-edited copies
+pyfabric install-claude-memory --force    # overwrite installed topic files
 ```
 
-Safe to re-run after upgrades — `MEMORY.md` is merged (never overwritten), and
-individual `.md` files are skipped unless `--force` is passed.
+On upgrade, the installer appends missing `MEMORY.md` entries by linked
+filename, including the entry for `mcp_vs_pyfabric.md` if it is new to your
+profile. It keeps existing index summaries even when `--force` refreshes the
+topic files.
+
+If your installed DataAgent index entry says that `.platform` uses CRLF,
+compare it with the [current source catalog](src/pyfabric/claude_memory/MEMORY.md)
+and update that summary in your profile's `MEMORY.md`. DataAgent `.platform`
+uses LF, config JSON uses CRLF, and both omit the trailing newline. Keep your
+custom notes and other index entries.
 
 **Any other assistant** — emit the memories as portable markdown and redirect
 to whatever file your tool reads:
@@ -62,7 +77,7 @@ pyfabric.
 
 ### First-run smoke test
 
-After `pip install --pre "pyfabric[azure]"`, verify install + auth + the
+After `pip install "pyfabric[azure]"`, verify install + auth + the
 core read APIs in one command:
 
 ```bash
@@ -92,6 +107,7 @@ for r in results:
 ### List workspaces with the REST client
 
 ```python
+# docs-snippet: network
 from pyfabric.client.auth import FabricCredential
 from pyfabric.client.http import FabricClient
 from pyfabric.workspace.workspaces import list_workspaces
@@ -122,6 +138,7 @@ def test_my_notebook(fabric_spark, mock_notebookutils):
 
 | Document | Description |
 | ---------- | ------------- |
+| [Tooling ecosystem](docs/ecosystem.md) | When to use pyfabric and complementary Fabric tools |
 | [Vision](docs/vision.md) | Project mission and design principles |
 | [Roadmap](docs/roadmap.md) | Implementation phases and current status |
 | [API Reference](docs/api.md) | All sub-packages and their public functions |
@@ -170,7 +187,7 @@ The SBOM for each release is available at:
 
 ## Requirements
 
-- Python 3.12 or later
+- Python 3.11 or later
 
 ### Developer setup
 

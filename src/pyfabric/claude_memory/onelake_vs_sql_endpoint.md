@@ -12,12 +12,10 @@ history, quick scans.
 **Why OneLake direct is better for discovery:**
 
 - SQL analytics endpoint has sync latency for `MirroredDatabase` — can lag
-  seconds-to-minutes behind the delta files during mirror refresh. OneLake
-  reads are up-to-the-second current.
+  seconds to minutes behind the Delta files during mirror refresh.
 - SQL endpoint requires ODBC handshake + AAD token on first query; OneLake
   needs a single ABFS `list` call for discovery.
-- Columnar projection/pushdown on parquet is strictly faster than serverless
-  SQL for single-table scans.
+- Columnar projection can reduce reads for exploratory single-table scans.
 
 **When to reach for `FabricSql` instead:**
 
@@ -29,21 +27,23 @@ history, quick scans.
 **Quick reference:**
 
 ```python
-# Discovery — prefer this
-from pyfabric.data import LocalLakehouse
-
-lh = LocalLakehouse(cred, workspace_id=WS, lakehouse_id=LH)
-df = lh.query("SELECT COUNT(*) FROM {table}", table="customers")
-
-# Schema inspection without downloading data
+# docs-snippet: network
 from deltalake import DeltaTable
-from pyfabric.data.onelake import abfs_path
 
-schema = DeltaTable(abfs_path(WS, LH, "Tables/customers"), storage_options=...).schema()
-
-# SQL endpoint — for joins or endpoint validation
+from pyfabric.data import LocalLakehouse
+from pyfabric.data.onelake import abfss_url
 from pyfabric.data.sql import FabricSql
 
-sql = FabricSql(server=..., database=..., credential=cred)
+# Inspect the Delta schema without scanning table rows.
+url = abfss_url(WS, LH, "Tables/dbo/customers")
+schema = DeltaTable(url, storage_options={"bearer_token": cred.storage_token}).schema()
+
+# Pull a synthetic table into local DuckDB and query it.
+with LocalLakehouse(":memory:", WS, LH, schema="dbo") as lh:
+    lh.pull_table(cred, "customers")
+    counts = lh.query_df("SELECT COUNT(*) FROM dbo.customers")
+
+# Exercise the SQL endpoint's own query path.
+sql = FabricSql(server=sql_endpoint, database=database_name, credential=cred)
 df = sql.query_df("SELECT a.id, b.name FROM a JOIN b ON a.id = b.id")
 ```

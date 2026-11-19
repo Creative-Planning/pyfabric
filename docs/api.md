@@ -1,6 +1,8 @@
 # API Reference
 
-This document describes all public modules and functions in pyfabric.
+This document describes the public modules and functions in pyfabric. See
+[the tooling matrix](ecosystem.md) for interactive and agent alternatives to
+calling the REST wrappers from Python.
 
 ## pyfabric.client — Fabric REST API
 
@@ -10,7 +12,7 @@ Authentication and credential management for Microsoft Fabric.
 
 | Function / Class | Description |
 | ----------------- | ------------- |
-| `FabricCredential(tenant=None)` | Unified credential using Azure Identity or az CLI fallback. Caches tokens per scope. |
+| `FabricCredential(tenant=None)` | Unified credential using `DefaultAzureCredential` when it can be initialized, with an Azure CLI provider otherwise. Caches tokens per scope. |
 | `FabricCredential.get_token(resource)` | Get a bearer token for a resource URL. Normalizes to scope format automatically. |
 | `FabricCredential.fabric_token` | Token for the Fabric REST API. |
 | `FabricCredential.storage_token` | Token for OneLake DFS (storage.azure.com). |
@@ -24,6 +26,7 @@ Authentication and credential management for Microsoft Fabric.
 **Example:**
 
 ```python
+# docs-snippet: network
 from pyfabric.client.auth import FabricCredential
 
 cred = FabricCredential(tenant="contoso")
@@ -48,6 +51,7 @@ HTTP client for the Fabric REST API v1 with retry, pagination, and LRO polling.
 **Example:**
 
 ```python
+# docs-snippet: network
 from pyfabric.client.http import FabricClient
 
 client = FabricClient(cred)
@@ -84,6 +88,7 @@ Client for the Fabric Livy API (Spark SQL execution).
 **Example:**
 
 ```python
+# docs-snippet: network
 from pyfabric.client.livy import LivyClient
 
 with LivyClient(cred, ws_id, lh_id) as livy:
@@ -286,6 +291,8 @@ pl.save_to_disk("ws/", display_name="pl_daily")
 **Parameterized pipeline** (trigger-time parameters bound to an activity):
 
 ```python
+from pyfabric.items.datapipeline import DataPipelineBuilder
+
 pl = DataPipelineBuilder(description="Parameterized refresh")
 pdf_path = pl.add_pipeline_parameter("pdf_path", default_value="")
 pl.add_notebook_activity(
@@ -425,7 +432,7 @@ Full guide: [docs/deploy.md](deploy.md).
 | ----------------- | ------------- |
 | `publish_repo(client, workspace_id, repo_dir, *, item_types_in_scope=None)` | Create/update every artifact folder in **dependency order** (Report → SemanticModel via `definition.pbir`, DataPipeline → Notebook via logicalId, type tiers otherwise). Cycles raise `PublishOrderError`. |
 | `unpublish_orphans(client, workspace_id, repo_dir, *, item_types_in_scope=None, dry_run=False)` | Delete workspace items with no matching folder. Always pass `item_types_in_scope`. |
-| `substitute_parameters(repo_dir, parameter_yml, *, environment, output_dir=None)` | Apply a fabric-cicd-style `find_replace` file for one environment; returns a byte-faithful staged copy for `publish_repo`. Requires the `deploy` extra (PyYAML). |
+| `substitute_parameters(repo_dir, parameter_yml, *, environment, output_dir=None)` | Apply the supported [`find_replace` options](deploy.md#parameter-substitution-multi-environment-promotion) for one environment; returns a byte-faithful staged copy for `publish_repo`. Requires the `deploy` extra (PyYAML). |
 | `PublishResult` / `UnpublishResult` / `PublishOrderError` | Result / error types. |
 
 ---

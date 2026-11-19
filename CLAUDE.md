@@ -10,6 +10,11 @@ and locally testing Microsoft Fabric items that are compatible with Fabric
 git sync. Target users are AI coding assistants and developers who need to
 generate and test Fabric item definitions locally.
 
+Use Fabric MCP for ad-hoc agent operations and `fab` for interactive terminal
+work. Use pyfabric for artifact authoring, validation, local tests and
+direct Python deployment to workspaces without Git integration.
+See [the tooling matrix](docs/ecosystem.md).
+
 ## What pyfabric is — and is not
 
 pyfabric is a **dev-time / build-time** tool. It runs on the developer's
@@ -131,7 +136,7 @@ The `.platform` file uses schema version 2.0:
 
 Supported item types: Notebook, Lakehouse, Dataflow, Environment,
 VariableLibrary, SemanticModel, Report, DataPipeline, Warehouse,
-MirroredDatabase, Map.
+MirroredDatabase, Map, DataAgent, Ontology.
 
 ## Provisioning Workflow (git-first)
 

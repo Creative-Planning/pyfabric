@@ -37,7 +37,13 @@ blanket-committing over it.
 Set the description through the Items API first, then commit:
 
 ```python
-client.patch(f"workspaces/{ws}/items/{item_id}", {"description": "..."})
+# docs-snippet: network
+from pyfabric.client.git import GitClient
+from pyfabric.client.http import FabricClient
+
+client = FabricClient(cred)
+git = GitClient(client=client)
+client.patch(f"workspaces/{ws}/items/{item_id}", {"description": description})
 git.commit_to_git(ws, comment="sync item description")
 ```
 
