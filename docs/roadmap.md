@@ -1,7 +1,9 @@
 # Roadmap
 
 This document tracks the implementation plan for pyfabric across four
-phases, from library foundation through LLM-powered data analysis.
+phases, from library foundation through LLM-powered data analysis. The
+[tooling matrix](ecosystem.md) describes where to adopt Microsoft tooling and
+where pyfabric owns the local workflow.
 
 ## Phase 1: Library Foundation (Complete)
 
@@ -31,9 +33,9 @@ Expand supported Fabric item types:
 - **Dataflow Gen2** — mashup/Power Query authoring support
 - **Pipelines** — activity graph authoring (notebook activities, copy
   activities, orchestration)
-- **Data Agents** — git-format validation + byte normalization only;
-  authoring is delegated to Microsoft's `fabric-data-agent-sdk` (see
-  `docs/data-agent.md`)
+- **Data Agents** — git-format validation, byte normalization, instruction
+  lint, and a pytest client for published-agent checks. Use Microsoft's
+  `fabric-data-agent-sdk` for authoring. See [Data Agents](data-agent.md).
 - **Lakehouses** — add new tables with schemas and data (not just the lakehouse
   shell)
 - Integration with Workspace Identity and Azure Key Vault for secure ETL/ELT
@@ -47,9 +49,8 @@ Expand supported Fabric item types:
 - Integration with Power Automate flows
 - **Git Integration client** — typed wrappers for the Fabric workspace
   ↔ git endpoints so post-commit "make Fabric match git" automation is
-  one Python call. Initial surface (`get_status`, `update_from_git`,
-  `sync_workspace`) covers the pull/CI direction; commit-to-git and
-  connection management to follow as use cases surface.
+  one Python call. `GitClient` covers status, pull and push (`get_status`,
+  `update_from_git`, `commit_to_git`, `sync_workspace`).
 
 ## Phase 4: LLM-Powered Data Analysis
 

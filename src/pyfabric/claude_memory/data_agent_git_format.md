@@ -1,6 +1,6 @@
 ---
 name: Data agent git format + adopt-first tooling
-description: DataAgent artifact anatomy, CRLF byte convention (incl. .platform), publish semantics, and which Microsoft tools to use instead of building — fabric-data-agent-sdk for authoring, MCP endpoint for querying/validation.
+description: DataAgent artifact anatomy, CRLF config JSON and LF .platform, publish semantics, and which Microsoft tools to use instead of building — fabric-data-agent-sdk for authoring, MCP endpoint for querying/validation.
 type: reference
 ---
 
@@ -14,22 +14,20 @@ description); `Files/Config/{draft,published}/stage_config.json`
 `userDescription`, `dataSourceInstructions`). `publish_info.json` and
 `published/` exist only after first publish.
 
-**Byte convention**: every DataAgent file is **CRLF + no trailing newline,
-including `.platform`** — the one item type whose `.platform` is not LF.
-`normalize_tree` / `write_artifact_file` handle this; never write these
-files with plain LF text writers.
+DataAgent config JSON uses CRLF and `.platform` uses LF. Both omit a trailing
+newline. Use `normalize_tree` or `write_artifact_file` for these conventions.
 
-**Adopt-first — do not build**:
+## Tool choice
 
 - Authoring (create, datasources, table selection, instructions, example
-  queries, publish): **`fabric-data-agent-sdk`** (PyPI, preview) — works
-  inside and outside Fabric notebooks (AzureCliCredential / SPN).
+  queries, publish) uses **`fabric-data-agent-sdk`** (preview). Check the SDK's
+  supported Python range and dependency constraints before installing.
 - Querying a **published** agent: MCP endpoint
   `https://api.fabric.microsoft.com/v1/mcp/workspaces/{ws}/dataagents/{id}/agent`,
   bearer token scope `https://api.fabric.microsoft.com/.default`
   (`mcp` + `azure-identity` packages). Unpublished agents return errors.
-  The OpenAI-Assistants external client is deprecated (shutdown
-  2026-08-26) — don't use it.
+  Use the published agent endpoint for Q&A and the Fabric Core MCP
+  server for ad-hoc Fabric operations.
 - LLM-critic eval: `evaluate_data_agent` in the same SDK.
 
 **Practical authoring flow**: configure via SDK/portal → publish →

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pyfabric.items.bundle import ArtifactBundle, save_to_disk
 from pyfabric.items.normalize import (
     BOM,
     canonical_bytes,
@@ -167,6 +168,80 @@ class TestWriteArtifactFile:
         # Ancestor resolution finds the .SemanticModel folder, so the TMDL rule
         # fires: LF + trailing blank line.
         assert sm.read_bytes() == b"model M\n\tculture: en-US\n\n"
+
+    @pytest.mark.parametrize("item_type", ["Warehouse", "Ontology", "Map"])
+    def test_nearest_item_ancestor_selects_workspace_root(
+        self, tmp_path: Path, item_type: str
+    ) -> None:
+        # A containing directory can also end in a recognized item suffix.
+        workspace = tmp_path / "parent.DataAgent" / "workspace"
+        path = workspace / f"sample.{item_type}" / "definition" / "sample.json"
+
+        write_artifact_file(path, b'{\r\n  "value": 1\r\n}\r\n')
+
+        assert path.read_bytes() == b'{\n  "value": 1\n}'
+        assert is_canonical(path)
+
+    @pytest.mark.parametrize("item_type", ["Warehouse", "Ontology", "Map"])
+    def test_preserves_canonical_platform_bytes(
+        self, tmp_path: Path, item_type: str
+    ) -> None:
+        path = tmp_path / f"sample.{item_type}" / ".platform"
+        canonical = b'{\n  "metadata": {"type": "%s"}\n}' % item_type.encode()
+        path.parent.mkdir()
+        path.write_bytes(canonical)
+
+        write_artifact_file(path, path.read_bytes())
+
+        assert path.read_bytes() == canonical
+        assert is_canonical(path)
+
+    @pytest.mark.parametrize("suffix", ["Map", "Warehouse", "Ontology"])
+    def test_data_agent_bundle_preserves_bytes_under_unmarked_suffix(
+        self, tmp_path: Path, suffix: str
+    ) -> None:
+        source_dir = f"Files/Config/draft/lakehouse-tables-Sample.{suffix}"
+        part = f"{source_dir}/datasource.json"
+        raw = b'{\n  "elements": []\n}\n'
+        expected = b'{\r\n  "elements": []\r\n}'
+        bundle = ArtifactBundle("DataAgent", "Agent", {part: raw})
+
+        agent = save_to_disk(bundle, tmp_path)
+        path = agent / part
+        assert (agent / ".platform").is_file()
+        assert not (path.parent / ".platform").exists()
+        assert path.read_bytes() == expected
+
+        write_artifact_file(path, raw, workspace_root=tmp_path)
+        assert path.read_bytes() == expected
+        assert is_canonical(path, workspace_root=tmp_path)
+        assert is_canonical(path)
+
+        write_artifact_file(path, raw)
+        assert path.read_bytes() == expected
+
+    @pytest.mark.parametrize("item_type", ["Map", "Warehouse", "Ontology"])
+    def test_bootstraps_nested_item_under_marked_data_agent(
+        self, tmp_path: Path, item_type: str
+    ) -> None:
+        agent = save_to_disk(ArtifactBundle("DataAgent", "Agent", {}), tmp_path)
+        workspace = agent / "workspace"
+        bundle = ArtifactBundle(item_type, "Sample", {})
+        item = workspace / bundle.dir_name
+        platform = item / ".platform"
+        metadata = bundle.platform_json().encode("utf-8")
+
+        assert not platform.exists()
+        write_artifact_file(platform, metadata.replace(b"\n", b"\r\n") + b"\r\n")
+        assert platform.read_bytes() == metadata
+        assert is_canonical(platform)
+
+        path = item / "definition" / "sample.json"
+        write_artifact_file(path, b'{\r\n  "value": 1\r\n}\r\n')
+        assert path.read_bytes() == b'{\n  "value": 1\n}'
+        assert is_canonical(path)
+        assert is_canonical(path, workspace_root=workspace)
+        assert not is_canonical(path, workspace_root=tmp_path)
 
     def test_creates_parent_dirs(self, tmp_path: Path):
         deep = tmp_path / "sm.SemanticModel" / "definition" / "tables" / "x.tmdl"

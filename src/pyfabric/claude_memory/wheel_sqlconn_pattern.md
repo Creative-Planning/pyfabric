@@ -75,15 +75,13 @@ results directly to OneLake as Delta — no Fabric notebook needed during
 development:
 
 ```python
+# docs-snippet: network
 from pyfabric.data import LocalLakehouse
-import duckdb
 
-con = duckdb.connect(":memory:")
-# ... seed bronze data ...
-build_silver(con, bronze_schema="bronze", silver_schema="silver")
-
-lh = LocalLakehouse(cred, workspace_id=WS, lakehouse_id=LH)
-lh.push_table("dim_customer", con.execute("SELECT * FROM silver.dim_customer").arrow())
+with LocalLakehouse("pipeline.duckdb", WS, LH, schema="silver") as lh:
+    # pipeline.duckdb contains the seeded bronze schema from your local tests.
+    build_silver(lh.conn, bronze_schema="bronze", silver_schema="silver")
+    lh.push_table(cred, "dim_customer")
 ```
 
 ## In the wild

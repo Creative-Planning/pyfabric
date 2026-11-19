@@ -68,31 +68,17 @@ pair entirely through builders, with no hand-written
 
 ## Phase C — `pyfabric.deploy` (repo-to-workspace deployment)
 
-Gated on Phase A. Originally scoped as "fabric-cicd interoperability"
-but pivoted after the live spike against a validation workspace
-surfaced three findings that made the interop story weak:
+Phase C delivered repository publishing, parameter substitution, and orphan
+cleanup for workflows already using pyfabric's builders and Python APIs. The
+original Python 3.14 limitation was specific to fabric-cicd 1.1.0.
+fabric-cicd 1.4.0 installed on Python 3.14.8 during the refresh. See
+[the tooling matrix](ecosystem.md) for current adoption guidance.
 
-1. **fabric-cicd does not run on Python 3.14** (the latest 1.1.0
-   requires `<3.14`). pyfabric does. Until upstream catches up,
-   fabric-cicd users on Python 3.14 have no path.
-2. **`.platform` does not byte-roundtrip through any REST publish**,
-   whether via fabric-cicd or pyfabric's own `upload_to_workspace`.
-   Fabric adds `"description": ""` to metadata and zeros the pinned
-   `logicalId` in `getDefinition` responses. The "byte-roundtrip"
-   claim in the original Phase C plan was empirically false for
-   metadata files.
-3. **logical_id pinning is git-sync-only**, not REST-publish. This
-   wasn't fabric-cicd's fault — it's a property of Fabric's REST
-   surface — but it invalidated the "pinned IDs survive deployment"
-   selling point.
-
-Net: fabric-cicd's unique value reduced to its repo-walking publish,
-multi-env parameter substitution, and orphan-delete helpers. Each is
-small (~50–100 LOC) on top of primitives pyfabric already exposes
-(`load_from_disk`, `upload_to_workspace`, `list_items`, `delete_item`).
-Building this in pyfabric removes the Python version gap, gives one
-auth surface, and keeps the canonicalization guarantees consistent
-end-to-end.
+The repeat Notebook probe showed REST publish plus `getDefinition` zeroing
+the explicitly pinned `logicalId` in `.platform`. Returned metadata omitted
+the optional description. Keep git-sync identity pinning in the build path
+and track workspace item IDs separately for REST deployments.
+See [the live probe](live-validation.md#rest-metadata-findings).
 
 | Deliverable | Status | Notes |
 | ----------- | ------ | ----- |
@@ -103,9 +89,8 @@ end-to-end.
 | Parameter substitution (`pyfabric.deploy.substitute_parameters`) | **Done** (#97 / PR #136, v0.1.11) | fabric-cicd `find_replace` schema; byte-faithful staged copy; `deploy` extra (PyYAML). |
 | Dependency ordering on publish | **Done** (#98 / PR #135, v0.1.11) | Kahn topological sort over Report→SemanticModel + DataPipeline→Notebook edges, type tiers otherwise; cycles raise `PublishOrderError`. |
 
-Done-when: `pyfabric.deploy` is the documented and tested path for
-repo-to-workspace deployment, and the `feedback_pyfabric_logical_id_pinning`
-memory carries the REST-publish caveat from finding #3. ✓
+The documented [Python deployment flow](deploy.md) includes the REST-publish
+identity caveat. ✓
 
 ## Phase D — SemanticModel + governance
 
@@ -160,7 +145,7 @@ motivates each entry.
 | [#71](https://github.com/Creative-Planning/pyfabric/issues/71) | **Done** — anti-patterns + caller-stamped CDC shipped in `open_mirror_landing_zone.md`; issue closed. |
 | [#52](https://github.com/Creative-Planning/pyfabric/issues/52) | **Done** (PR #138, v0.1.11) — live DDL e2e suite gated on `PYFABRIC_TEST_WORKSPACE_ID` + `PYFABRIC_TEST_LAKEHOUSE_ID`. Its first field runs caught two real `rename_schema` bugs (fixed in PR #140). |
 | [#55](https://github.com/Creative-Planning/pyfabric/issues/55) | **Done** (PR #141, v0.1.11) — fixture captured live per the runbook; `add_sparksql` byte-exact to it (sparksql META has no `language_group`). |
-| [#42](https://github.com/Creative-Planning/pyfabric/issues/42) | **Partially done** (PR #134, v0.1.11) — TMDL linter shipped (`lint_semantic_model`, 5 rules, wired into `validate_item`). Still open: DirectLake partition swapper, sempy bridge. |
+| [#42](https://github.com/Creative-Planning/pyfabric/issues/42) | **Partially done** (PR #134, v0.1.11) — TMDL linter shipped (`lint_semantic_model`, 5 rules, wired into `validate_item`). DirectLake partition swapper remains open. The sempy bridge was dropped in favor of using the upstream tools directly. |
 
 ## Dependency graph
 
@@ -169,7 +154,7 @@ A (reliability)  ─────────┐
                           │
 B (notebook + env)  ──────┤
                           │
-                          ├──► C (fabric-cicd interop)
+                          ├──► C (repo-to-workspace deployment)
                           │           │
                           │           ├──► E (DataPipeline + DataAgent)
                           │

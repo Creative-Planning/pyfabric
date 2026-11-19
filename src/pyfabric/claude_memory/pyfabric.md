@@ -9,48 +9,50 @@ helping AI coding assistants create and locally validate Microsoft Fabric
 items compatible with Fabric git sync. Also provides workspace CRUD, OneLake
 access, and a pytest plugin.
 
-**Status:** beta (`0.1.0b*`). Always install with `--pre`:
+Install pyfabric and the extras your workflow uses.
 
 ```bash
-pip install --pre pyfabric[all]
+pip install 'pyfabric[all]'
 ```
 
 **Extras** (composable):
 
-- `azure` — `azure-identity`, `requests` (auth + HTTP)
-- `data` — `pyodbc`, `azure-storage-file-datalake` (OneLake DFS client)
-- `testing` — `duckdb`, `deltalake`, `pytest` (local lakehouse mirror +
-  pytest plugin exposed under `pyfabric.testing`)
+- `azure` for Azure authentication and REST access.
+- `data` for OneLake and SQL data access.
+- `lakehouse-io` for Delta table writes.
+- `testing` for DuckDB and pytest fixtures, including `lakehouse-io`.
+- `dataagent` for the published Data Agent MCP query client.
+- `deploy` for YAML-driven parameter substitution.
 
 **Imports worth knowing:**
 
 ```python
-from pyfabric.client.auth import FabricCredential   # az-identity wrapper
-from pyfabric.workspace import workspaces           # workspace CRUD
-from pyfabric.data import ...                       # OneLake / DuckDB helpers
-from pyfabric.cli import add_standard_args, run_main  # CLI script scaffolding
+from pyfabric.client.auth import FabricCredential
+from pyfabric.client.http import FabricClient
+from pyfabric.cli import add_standard_args, run_main
+from pyfabric.data import LocalLakehouse
+from pyfabric.workspace.workspaces import list_workspaces
 ```
 
 `pyfabric.cli.run_main(fn, parser)` is a standard wrapper: parses args, sets
 up structured logging, captures exceptions to a log file, prints one-line
 summary on failure. Use it for any new script — don't roll your own.
 
-**Auth model:** `FabricCredential` wraps `azure.identity.DefaultAzureCredential`
-(with `AzureCliCredential` first). Whichever tenant `az login` is signed into
-for the current shell is the tenant pyfabric talks to. Pass `tenant=` to
-`FabricCredential` to override.
+## Auth model
+
+`FabricCredential` uses `azure.identity.DefaultAzureCredential` when it
+can initialize it. The Azure CLI subprocess provider is the fallback when
+initialization fails or Azure Identity is absent. `tenant=` informs the
+Azure Identity provider's allowed tenants. The subprocess provider uses the
+current Azure CLI account. Verify the identity and workspace permissions
+for the provider actually in use.
 
 **Pitfalls:**
 
-- `pip install pyfabric` (without `--pre`) fails or resolves a stub while the
-  package is in beta.
-- If `az` isn't signed into the target tenant, pyfabric calls return 401/403.
-  Fix by signing into the right tenant in **this shell only** — don't
-  polluate other windows. If the environment provides per-window tenant
-  isolation (e.g. `AZURE_CONFIG_DIR` set per session), use that.
-- `pyfabric.testing.plugin` registers as a pytest11 entry point — if pytest
-  discovers it unexpectedly, verify you actually meant to install the
-  `testing` extra.
+- When using Azure CLI authentication in an isolated shell, preserve its
+  session-specific `AZURE_CONFIG_DIR`.
+- The package registers `pyfabric.testing.plugin` as a pytest entry point.
+  Install the `testing` extra to use the local test fixtures.
 - Lakehouse GUIDs are easiest to grab from the Fabric UI (Settings →
   Identifier). Workspace GUIDs come from listing workspaces via pyfabric.
 - **logicalId identity on rebuild**: Fabric git-sync keys deployed items
@@ -72,19 +74,28 @@ for the current shell is the tenant pyfabric talks to. Pass `tenant=` to
 
 ```python
 # List workspaces
-from pyfabric.workspace import workspaces
+# docs-snippet: network
+from pyfabric.client.http import FabricClient
+from pyfabric.workspace.workspaces import list_workspaces
 
-for ws in workspaces.list(cred):
-    print(ws.id, ws.display_name)
-
-# Query a lakehouse table via OneLake + DuckDB
-from pyfabric.data import LocalLakehouse
-
-lh = LocalLakehouse(cred, workspace_id=WS, lakehouse_id=LH)
-df = lh.query("SELECT * FROM {table} LIMIT 10", table="customers")
+client = FabricClient(cred)
+for ws in list_workspaces(client):
+    print(ws["id"], ws["displayName"])
 ```
 
-**Further reading:**
+```python
+# Query a synthetic lakehouse table via OneLake and DuckDB
+# docs-snippet: network
+from pyfabric.data import LocalLakehouse
+
+with LocalLakehouse(":memory:", WS, LH, schema="dbo") as lh:
+    lh.pull_table(cred, "customers")
+    df = lh.query_df("SELECT * FROM dbo.customers LIMIT 10")
+```
+
+## Further reading
+
+- [When to use MCP, fab, or pyfabric](mcp_vs_pyfabric.md)
 
 - PyPI: <https://pypi.org/project/pyfabric/>
 - Source: <https://github.com/Creative-Planning/pyfabric>

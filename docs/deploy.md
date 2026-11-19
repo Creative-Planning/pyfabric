@@ -2,57 +2,62 @@
 
 `pyfabric.deploy` is the deployment layer that complements the authoring
 layer (builders in `pyfabric.items`). It walks a repository directory of
-git-sync-format artifact folders, publishes each to a target workspace
-via REST, and removes items that no longer have a corresponding folder.
+git-sync-format artifact folders and publishes each via REST to a workspace
+without Git integration. You can also use it to preview and remove items that
+have no corresponding folder in a fully owned scope.
 
-It composes existing pyfabric primitives — `load_from_disk`,
-`upload_to_workspace`, `list_items`, `delete_item` — so the byte
-canonicalization guarantees and auth chain stay consistent end-to-end.
+It uses pyfabric's existing bundle loader, definition uploader, item operations,
+and authentication.
 
 ## When to use this
 
-Use `pyfabric.deploy` when you want a Python-native, repo-driven
-deployment story with no extra dependencies. Specifically:
+For workspaces without Git integration, use `pyfabric.deploy` when a Python
+script already uses pyfabric to build or validate artifacts and needs to
+publish them in dependency order. For standard direct repository-to-workspace
+promotion, start with `fabric-cicd`. Use `fab` for interactive terminal work
+such as inspecting items and jobs. See [the tooling matrix](ecosystem.md).
 
-- You already use pyfabric for authoring and want one tool for the
-  full lifecycle.
-- You need to run on Python 3.14 (or any Python version not yet covered
-  by other Fabric deployment tools).
-- You want the canonical-byte guarantee from `normalize_tree` enforced
-  before every publish.
-
-For workspace pulls (git remote → Fabric), use `pyfabric.client.git`
-(`GitClient.sync_workspace`) — that's the complementary direction this
-module doesn't cover.
+For Git-connected targets, build and validate the artifacts locally, commit and
+push them to the connected branch, and have the workspace owner manually sync
+from the Fabric portal. Follow that workflow for provisioning, publishing and
+artifact removal. [Git-first provisioning workflow](../CLAUDE.md#provisioning-workflow-git-first)
 
 ## API
 
-Two functions and two result types:
+This example assumes the target workspace has no Git integration and the
+repository owns all its Notebook and Environment items. The cleanup call
+previews the items whose types are in scope and whose names are absent from the
+local definitions for those types.
 
 ```python
+# docs-snippet: network
 from pyfabric.client.http import FabricClient
 from pyfabric.deploy import publish_repo, unpublish_orphans
 
-client = FabricClient()  # uses DefaultAzureCredential chain
+client = FabricClient()  # uses FabricCredential
 
 # Create or update every Notebook + Environment under definitions/
 results = publish_repo(
     client,
-    workspace_id="...",
+    workspace_id=workspace_id,
     repo_dir="definitions/",
     item_types_in_scope=["Notebook", "Environment"],
 )
 for r in results:
     print(f"{r.action}: {r.item_type} {r.display_name} (id={r.item_id})")
 
-# Delete any Notebook + Environment in the workspace that doesn't
-# have a corresponding folder in definitions/
+# Preview orphaned Notebook and Environment items.
 orphans = unpublish_orphans(
     client,
-    workspace_id="...",
+    workspace_id=workspace_id,
     repo_dir="definitions/",
     item_types_in_scope=["Notebook", "Environment"],
+    dry_run=True,
 )
+for orphan in orphans:
+    print(
+        f"Would delete {orphan.item_type} {orphan.display_name} (id={orphan.item_id})"
+    )
 ```
 
 Both functions accept `repo_dir` as a `str` or `Path`.
@@ -70,57 +75,66 @@ Both functions accept `repo_dir` as a `str` or `Path`.
 
 ### `unpublish_orphans`
 
-- Lists workspace items via `list_items`, builds the set of
-  `(displayName, type)` pairs present in `repo_dir`, and deletes any
-  workspace item NOT in that set.
-- `item_types_in_scope=[...]` constrains both the local-discovery side
-  and the workspace-side. **Critical safety rail** — without it, an
-  empty `repo_dir` deletes everything in the workspace.
-- `dry_run=True` returns the would-delete list without calling
-  `delete_item`.
+Use orphan cleanup only when the repository owns every workspace item of the
+selected types, for example in a workspace dedicated to the repository.
+
+- `item_types_in_scope=[...]` limits local discovery and workspace deletion by
+  type. Every workspace item of those types whose `(displayName, type)` pair is
+  absent from `repo_dir` is a deletion candidate, including items created
+  manually or by other workflows. Omitting the scope considers every item type.
+- `dry_run=True` returns the candidate list without deleting items. Review
+  the candidates and verify they are intended deletions before running the
+  cleanup with `dry_run=False`.
 
 ## Recommended flow
 
+Run the byte preflight against the files matched by
+`pyfabric.items.normalize.ARTIFACT_GLOBS`. The publisher can include files
+outside those defaults, such as `notebook-settings.json` and `fs-settings.json`.
+Inspect `ARTIFACT_GLOBS` for coverage and pass project-specific `extra_globs`
+for additional files whose expected bytes you have verified against the
+normalizer's rules. Extra patterns expand file discovery and use the same byte
+rules.
+
 ```python
+# docs-snippet: network
+from pathlib import Path
+
 from pyfabric.client.http import FabricClient
 from pyfabric.deploy import publish_repo, unpublish_orphans
 from pyfabric.items.normalize import normalize_tree
 
 REPO = "definitions/"
-WS_ID = "..."
+WS_ID = workspace_id
 SCOPE = ["Notebook", "Environment"]
 
-# 1. Pre-publish lint — every artifact file must already match
-#    Fabric's canonical bytes. Drift here means a downstream git-sync
-#    cycle would mark the file as changed by Fabric.
-lint = normalize_tree(REPO, dry_run=True)
+# 1. Check files matched by the default artifact patterns.
+lint = normalize_tree(Path(REPO), dry_run=True)
 assert lint.is_canonical, f"non-canonical files: {lint.changed}"
 
 # 2. Publish (create + update)
 client = FabricClient()
 publish_repo(client, WS_ID, REPO, item_types_in_scope=SCOPE)
 
-# 3. Remove items that no longer have a corresponding folder
-unpublish_orphans(client, WS_ID, REPO, item_types_in_scope=SCOPE)
+# 3. Preview cleanup once this repo owns every item of the selected types.
+orphans = unpublish_orphans(
+    client, WS_ID, REPO, item_types_in_scope=SCOPE, dry_run=True
+)
+for orphan in orphans:
+    print(
+        f"Would delete {orphan.item_type} {orphan.display_name} (id={orphan.item_id})"
+    )
 ```
 
 ## How REST publish handles `.platform`
 
-Verified live against a validation workspace 2026-05-27:
+The disposable-workspace Notebook probe returned a zeroed `logicalId` in
+`.platform` after REST publish and `getDefinition`, even though the input
+contained an explicit nonzero ID. The returned metadata omitted the optional
+`description`. See [the live probe](live-validation.md#rest-metadata-findings).
 
-- `notebook-content.py` and other content files round-trip byte-for-byte
-  through `publish_repo` + `get_item_definition`.
-- `.platform` does **not** round-trip. Fabric:
-  - **adds** `"description": ""` to `metadata` when the bundle has no
-    description, and
-  - **zeros** the `logicalId` field in `getDefinition` responses,
-    regardless of what was pinned locally.
-
-The pinned `logicalId` is preserved for **git-sync** identity tracking
-(see the `pyfabric-logicalid-pinning` claude-memory entry) but is NOT
-preserved through REST publish + `getDefinition`. If you mix the two
-paths, be aware: the same artifact authored once may appear under
-different identity in each path.
+Use the pinned `.platform` ID for git-sync identity tracking. Use the
+workspace item ID returned by REST when operating on the published item.
 
 ## Publish ordering
 
@@ -147,10 +161,11 @@ the participating artifacts.
 
 ## Parameter substitution (multi-environment promotion)
 
-`substitute_parameters` applies a fabric-cicd-style `parameter.yml`
-find/replace to a copy of the repo, so one artifact bundle promotes
+`substitute_parameters` applies the supported `find_replace` subset of
+fabric-cicd-style `parameter.yml` to a copy of the repo, so one artifact bundle promotes
 across DEV / PPE / PROD workspaces with different lakehouse ids,
-connection strings, etc. Requires the `deploy` extra
+connection strings, etc. Use the direct publish below for targets without Git
+integration. Requires the `deploy` extra
 (`pip install 'pyfabric[deploy]'` — pulls in PyYAML).
 
 ```yaml
@@ -163,6 +178,7 @@ find_replace:
 ```
 
 ```python
+# docs-snippet: network
 from pyfabric.deploy import publish_repo, substitute_parameters
 
 staged = substitute_parameters(
