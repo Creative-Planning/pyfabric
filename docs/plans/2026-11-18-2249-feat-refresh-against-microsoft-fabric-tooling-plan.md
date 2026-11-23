@@ -153,8 +153,8 @@ flowchart TB
 
 ## Implementation Units
 
+| Unit | Title | Key files | Depends on |
 | --- | --- | --- | --- |
-|---|---|---|---|
 | U1 | Live baseline and verified findings | `docs/live-validation.md`, `docs/ecosystem.md` | none |
 | U2 | Docs, memory and snippet tests | `docs/ecosystem.md`, `tests/test_docs_snippets.py`, `src/pyfabric/claude_memory/` | U1 |
 | U3 | Contract-drift checks | `tests/contract/` | U1 |
@@ -394,8 +394,8 @@ flowchart TB
 
 ## Verification Contract
 
+| Gate | Command | Applies to |
 | --- | --- | --- |
-|---|---|---|
 | Lint | `ruff check .` and `ruff format --check .` | every unit |
 | Types | `mypy src/` | every code unit |
 | Unit tests | `pytest` | every unit |
